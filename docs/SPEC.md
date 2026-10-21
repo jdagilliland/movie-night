@@ -1,7 +1,5 @@
 # Spec: Paste & Share Content Store
 
-Items marked **[Decision]** are defaults chosen in the absence of explicit requirements and may be revised.
-
 ## 1. Overview
 
 A minimal web application where an authenticated user pastes text, submits it, and receives a short link. Anyone following that link (no login required) sees the original text, rendered with minimal styling. Content is stored durably, survives server restarts, and expires after an admin-configured period. Admins can take down content.
@@ -35,17 +33,16 @@ A minimal web application where an authenticated user pastes text, submits it, a
 2. **Share:** As a user, I can easily copy the short link, so that I can send it to others.
 3. **View:** As anyone (signed in or not), I can open the link and read the text exactly as written.
 4. **Raw access:** As a technical user, I can fetch the raw text (e.g. with `curl`).
-5. **Not found:** As a recipient of a bad or expired link, I see a clear "not found" message.
-6. **Removed:** As a recipient of a taken-down link, I see a clear "removed" message.
-7. **Takedown:** As an admin, I can take down a paste by ID so its content is no longer served.
-8. **Expiry config:** As an admin, I can configure how long pastes live.
+5. **Not found:** As a recipient of a bad, expired, or removed link, I see a clear "not found" message.
+6. **Takedown:** As an admin, I can take down a paste by ID so its content is no longer served.
+7. **Expiry config:** As an admin, I can configure how long pastes live.
 
 ## 4. Functional Requirements
 
 ### 4.1 Creating a paste
 - **FR-1:** The home page (`GET /`) presents a single textarea and a submit button to signed-in users. Anonymous visitors see a sign-in prompt instead (see §5).
 - **FR-2:** Submitting (`POST /`) requires authentication. It stores the text and the creator's identity and returns a unique short ID.
-- **FR-3:** After submission, the user is redirected (303) to the paste's view page, which displays its full URL with a "copy" affordance.
+- **FR-3:** After submission, the user is redirected (303) to the paste's view page, which displays its full URL with a "copy link" control.
 - **FR-4:** Empty or whitespace-only submissions are rejected with a validation message.
 - **FR-5:** Submissions over the maximum size are rejected. Limit: 512 KiB of UTF-8 text.
 - **FR-6:** Text is stored exactly as received, except line endings normalized to `\n`.
@@ -54,21 +51,23 @@ A minimal web application where an authenticated user pastes text, submits it, a
 - **FR-7:** IDs are always server-generated; users cannot choose them.
 - **FR-8:** IDs are random base62 strings (`[0-9A-Za-z]`) of length 8 (~2.18 × 10¹⁴ space).
 - **FR-9:** IDs are generated with a cryptographically secure RNG so they are not guessable/enumerable.
-- **FR-10:** On ID collision (including with a taken-down tombstone), the server retries generation (up to N times, then 500).
+- **FR-10:** On ID collision (including with a taken-down row), the 
+  server retries generation (up to 7 times, then 500).
 - **FR-11:** URL format: `https://<host>/<id>`.
 
 ### 4.3 Viewing a paste
 - **FR-12:** Viewing is public; no authentication is required or checked.
 - **FR-13:** `GET /<id>` returns an HTML page displaying the text in a `<pre>` block, with all content HTML-escaped.
 - **FR-14:** `GET /<id>/raw` returns the text as `text/plain; charset=utf-8`.
-- **FR-15:** The view page shows only: the text, creation timestamp, expiry timestamp, a "raw" link, and a "new paste" link.
+- **FR-15:** The view page shows only: the text, creation timestamp, expiry timestamp, a "copy link" control, a "raw" link, and a "new paste" link.
 - **FR-16:** Unknown **or expired** IDs return HTTP 404 with a minimal "Paste not found" page. Expired and never-existed are indistinguishable to viewers.
-- **FR-17:** Taken-down IDs also return HTTP 404.
+- **FR-17:** Taken-down IDs return HTTP 404 with the same page as unknown IDs. Taken-down and never-existed are indistinguishable to viewers.
 
 ### 4.4 Expiration
 - **FR-18:** Every paste expires after a TTL set by the admin via 
   configuration (`PASTE_TTL_DAYS`, §7.4). Users cannot choose or change it, 
-  but the users shall be alerted to the TTL at the time of paste creation.
+  The view page shows a visible expiry notice, e.g. "This paste expires on
+  2026-11-20."
 - **FR-19:** `expires_at` is computed and stored at creation time. Changing 
   the TTL affects only pastes created afterward, so a link's lifetime never 
   changes after it's shared.
@@ -78,7 +77,7 @@ A minimal web application where an authenticated user pastes text, submits it, a
 ### 4.5 Deletion & takedown
 - **FR-22:** Users cannot delete or edit pastes. Pastes are immutable once created.
 - **FR-23:** Admins can take down a paste by ID via an admin CLI (§6).
-- **FR-24:** Takedown permanently erases the paste content and leaves a tombstone row (ID, `taken_down_at`, reason) so the link returns 410 and the ID is never reissued.
+- **FR-24:** Takedown permanently erases the paste content and keeps the row with its metadata (`taken_down_at`, `takedown_reason`) so the takedown is recorded. Public responses for the ID are 404 (FR-17).
 - **FR-25:** Takedown is idempotent; taking down an already-removed or nonexistent ID reports that clearly and exits non-zero for nonexistent.
 
 ### 4.6 Persistence
@@ -153,12 +152,14 @@ server runs.
 
 ```
 movie-night serve                                   # run the web server
-movie-night takedown <id> .                         # erase content
+movie-night takedown <id> --reason "<text>"         # erase content, log takedown
 movie-night show <id>                               # print metadata (created_at, created_by, expires_at, status)
 movie-night purge-expired                           # run the purge job once, on demand
 ```
 
-- Takedowns are not logged, and are indistinguishable from unrecognized ids.
+- Takedowns are logged: the ID, reason, and timestamp are recorded in the log, never the content. The DB row keeps `taken_down_at` and `takedown_reason`.
+- `--reason` is required for `takedown`.
+- Public responses for taken-down IDs are indistinguishable from unrecognized IDs (404). The CLI reports takedown status, including already-removed and nonexistent IDs (FR-25).
 - TTL is configured via `PASTE_TTL_DAYS` and takes effect on server restart.
 - CLI parsing via `optparse-applicative`.
 
@@ -170,7 +171,7 @@ Browser / curl ──HTTP──▶ Warp ──▶ WAI middleware ──▶ Serva
                                    security headers)     └─ AuthHandler ──▶ user list / sessions    │
                                                                                                     │
 Admin CLI (takedown / show / purge-expired) ────────────────────────────────────────────────────────┤
-Purge thread (hourly) ──────────────────────────────────────────────────────────────────────────────┘
+Purge thread (daily)  ──────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### 7.1 Suggested libraries
@@ -189,8 +190,8 @@ Handlers depend on a record interface, not SQLite directly, so tests can use an 
 ```haskell
 data LookupResult
   = Found Paste
-  | Removed            -- taken down
-  | NotFound           -- never existed or expired
+  | Gone               -- taken down; served as 404 publicly
+  | NotFound           -- never existed or expired; served as 404
 
 data Store = Store
   { storeInsert       :: Paste -> IO (Either InsertError ())     -- DuplicateId on collision
@@ -233,7 +234,8 @@ CREATE INDEX IF NOT EXISTS pastes_expires_at ON pastes(expires_at);
 
 ## 8. Presentation
 
-- Server-rendered HTML; no JavaScript required (optional tiny inline script for "copy link").
+- Server-rendered HTML.
+- The view page has a "copy link" control, implemented with a small script served as a static file (`/static/copy.js`). The link text stays selectable without it.
 - Single small inline stylesheet: system monospace font, `white-space: pre-wrap` for wrapping long lines, comfortable max-width, no colors beyond defaults.
 - Responsive and readable on mobile; respects light/dark mode via `prefers-color-scheme`.
 
@@ -241,7 +243,7 @@ CREATE INDEX IF NOT EXISTS pastes_expires_at ON pastes(expires_at);
 
 ### 9.1 Security
 - **NFR-1:** All user content is HTML-escaped on render; never interpreted as markup.
-- **NFR-2:** Response headers: `Content-Security-Policy: default-src 'none'; style-src 'self' 'unsafe-inline'`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`.
+- **NFR-2:** Response headers: `Content-Security-Policy: default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self'`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`.
 - **NFR-3:** Raw endpoint always served as `text/plain` so browsers never sniff it as HTML.
 - **NFR-4:** Request body size enforced at the WAI layer before full body read.
 - **NFR-5:** Per-user rate limit on paste creation (e.g. 30/min). This is 
@@ -255,7 +257,7 @@ CREATE INDEX IF NOT EXISTS pastes_expires_at ON pastes(expires_at);
 - **NFR-10:** p95 latency < 50 ms for view requests on modest hardware.
 
 ### 9.3 Reliability & Operations
-- **NFR-11:** Request logging (Apache-style); paste content and credentials are never logged.
+- **NFR-11:** Request logging (Apache-style); takedown events are logged (§6). Paste content and credentials are never logged.
 - **NFR-12:** `GET /healthz` returns 200 when the DB is reachable.
 - **NFR-13:** SQLite file is backed up regularly (e.g. `sqlite3 .backup` or Litestream). Takedowns should be re-applied if restoring from a backup older than the takedown.
 
@@ -265,11 +267,12 @@ CREATE INDEX IF NOT EXISTS pastes_expires_at ON pastes(expires_at);
 |---|---|---|---|---|
 | GET | `/` | required | 200 HTML form | 401 / sign-in prompt |
 | POST | `/` | required | 303 → `/<id>` | 400 empty, 401, 413 too large |
-| GET | `/:id` | none | 200 HTML | 400 malformed, 404 missing/expired, 410 removed |
-| GET | `/:id/raw` | none | 200 text/plain | 400, 404, 410 |
+| GET | `/:id` | none | 200 HTML | 400 malformed, 404 missing, expired, or taken down |
+| GET | `/:id/raw` | none | 200 text/plain | 400, 404 |
+| GET | `/static/copy.js` | none | 200 application/javascript | — |
 | GET | `/healthz` | none | 200 | 503 if DB unreachable |
 
-Route ordering: fixed paths (`/healthz`, future `/auth/*`) must be matched before `Capture "pasteId"`. `PasteId` parsing (8-char base62) also prevents them from colliding.
+Route ordering: fixed paths (`/healthz`, `/static/*`, future `/auth/*`) must be matched before `Capture "pasteId"`. `PasteId` parsing (8-char base62) also prevents them from colliding.
 
 ## 11. Testing Requirements
 
@@ -278,9 +281,10 @@ Route ordering: fixed paths (`/healthz`, future `/auth/*`) must be matched befor
 - **Integration (`hspec-wai`):**
   - Form flow with valid credentials; `POST /` without/with bad credentials → 401.
   - View routes succeed with no credentials.
-  - 404 (unknown), 404 (expired: insert with past `expires_at`), 410 (taken down), 400, 413.
-  - HTML escaping (`<script>` renders literally); security headers present.
-- **Admin:** takedown erases content and yields 410; repeat takedown is idempotent; purge removes only expired rows.
+  - 404 (unknown), 404 (expired: insert with past `expires_at`), 404 (taken down), 400, 413.
+  - View page includes the expiry notice and the copy control; `/static/copy.js` is served.
+  - HTML escaping (`<script>` renders literally); security headers present (including CSP `script-src`).
+- **Admin:** takedown erases content, yields 404 publicly, and is logged; repeat takedown is idempotent; purge removes only expired rows.
 - **Persistence:** create paste, restart app against the same DB file, fetch succeeds.
 
 ## 12. Future Work
