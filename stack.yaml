@@ -1,0 +1,4 @@
+snapshot: lts-24.64  # GHC 9.10.3
+
+packages:
+  - .

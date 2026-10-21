@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-test:
+    # Native ARM64 runner: images target Graviton (SPEC §12), and Haskell
+    # builds under QEMU emulation are too slow to be practical.
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: haskell-actions/setup@v2
+        with:
+          ghc-version: '9.10.3'
+          enable-stack: true
+          stack-version: 'latest'
+
+      - name: Cache Stack store
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.stack
+            .stack-work
+          key: stack-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('stack.yaml', 'stack.yaml.lock', '*.cabal') }}
+          restore-keys: |
+            stack-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Build and test
+        run: stack test --system-ghc --no-install-ghc

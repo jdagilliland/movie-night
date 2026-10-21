@@ -1,7 +1,7 @@
 # CLAUDE.md
 
-This repo hosts a paste-and-short-link web app (Haskell + Servant), despite the
-repo name. The spec is in `docs/SPEC.md`.
+Movie Night is a paste-and-short-link web app (Haskell + Servant). "Movie
+Night" is the application's name. The spec is in `docs/SPEC.md`.
 
 ## Git
 

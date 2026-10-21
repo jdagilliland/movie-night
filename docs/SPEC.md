@@ -1,4 +1,4 @@
-# Spec: Paste & Share Content Store
+# Spec: Movie Night
 
 ## 1. Overview
 
@@ -198,7 +198,8 @@ Purge thread (daily)  ───────────────────�
 
 ### 7.1 Suggested libraries
 - **Server:** `servant`, `servant-server`, `warp`, `wai-extra` (logging, request size limit)
-- **HTML:** `servant-lucid` + `lucid2` (auto-escapes text)
+- **HTML:** `servant-lucid` + `lucid` (auto-escapes text;
+  `servant-lucid` does not support `lucid2`)
 - **Persistence:** SQLite via `sqlite-simple`
 - **Random IDs:** `crypton` (or `entropy`) for secure random bytes
 - **Password hashing (interim auth):** `crypton` (argon2id)
