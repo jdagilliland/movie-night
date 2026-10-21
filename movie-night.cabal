@@ -8,6 +8,7 @@ extra-doc-files:    docs/SPEC.md
 common shared
   default-language: GHC2021
   default-extensions:
+    DerivingStrategies
     OverloadedStrings
   ghc-options:
     -Wall
@@ -25,7 +26,18 @@ library
   import:           shared
   hs-source-dirs:   src
   exposed-modules:
-    MovieNight
+    MovieNight.Content
+    MovieNight.Paste
+    MovieNight.PasteId
+    MovieNight.Store
+    MovieNight.Store.Memory
+  build-depends:
+    bytestring,
+    containers,
+    crypton,
+    http-api-data,
+    text,
+    time
 
 executable movie-night
   import:           shared
@@ -41,10 +53,16 @@ test-suite spec
   hs-source-dirs:   test
   main-is:          Spec.hs
   other-modules:
-    MovieNightSpec
+    MovieNight.ContentSpec
+    MovieNight.PasteIdSpec
+    MovieNight.Store.MemorySpec
+    MovieNight.StoreContract
   ghc-options:      -threaded -rtsopts "-with-rtsopts=-N"
   build-tool-depends:
     hspec-discover:hspec-discover
   build-depends:
     movie-night,
-    hspec
+    hspec,
+    QuickCheck,
+    text,
+    time

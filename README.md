@@ -23,7 +23,7 @@ stack exec movie-night      # run the executable
 ```
 stack test                              # build and run the full test suite
 stack test --file-watch                 # re-run tests whenever a file changes
-stack test --ta '--match "appName"'     # run only tests whose description matches
+stack test --ta '--match "FR-8"'        # run only tests whose description matches
 ```
 
 `--ta` passes arguments through to hspec. Test descriptions include
