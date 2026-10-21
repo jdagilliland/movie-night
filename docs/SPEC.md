@@ -47,12 +47,12 @@ A minimal web application where an authenticated user pastes text, submits it, a
 - **FR-2:** Submitting (`POST /`) requires authentication. It stores the text and the creator's identity and returns a unique short ID.
 - **FR-3:** After submission, the user is redirected (303) to the paste's view page, which displays its full URL with a "copy" affordance.
 - **FR-4:** Empty or whitespace-only submissions are rejected with a validation message.
-- **FR-5:** Submissions over the maximum size are rejected. **[Decision]** Limit: 512 KiB of UTF-8 text.
-- **FR-6:** Text is stored exactly as received, except line endings normalized to `\n`. **[Decision]**
+- **FR-5:** Submissions over the maximum size are rejected. Limit: 512 KiB of UTF-8 text.
+- **FR-6:** Text is stored exactly as received, except line endings normalized to `\n`.
 
 ### 4.2 Short links
 - **FR-7:** IDs are always server-generated; users cannot choose them.
-- **FR-8:** IDs are random base62 strings (`[0-9A-Za-z]`). **[Decision]** Length 8 (~2.18 × 10¹⁴ space).
+- **FR-8:** IDs are random base62 strings (`[0-9A-Za-z]`) of length 8 (~2.18 × 10¹⁴ space).
 - **FR-9:** IDs are generated with a cryptographically secure RNG so they are not guessable/enumerable.
 - **FR-10:** On ID collision (including with a taken-down tombstone), the server retries generation (up to N times, then 500).
 - **FR-11:** URL format: `https://<host>/<id>`.
@@ -62,14 +62,18 @@ A minimal web application where an authenticated user pastes text, submits it, a
 - **FR-13:** `GET /<id>` returns an HTML page displaying the text in a `<pre>` block, with all content HTML-escaped.
 - **FR-14:** `GET /<id>/raw` returns the text as `text/plain; charset=utf-8`.
 - **FR-15:** The view page shows only: the text, creation timestamp, expiry timestamp, a "raw" link, and a "new paste" link.
-- **FR-16:** Unknown **or expired** IDs return HTTP 404 with a minimal "Paste not found" page. **[Decision]** Expired and never-existed are indistinguishable to viewers.
-- **FR-17:** Taken-down IDs return HTTP 410 Gone with a minimal "This paste has been removed" page. **[Decision]**
+- **FR-16:** Unknown **or expired** IDs return HTTP 404 with a minimal "Paste not found" page. Expired and never-existed are indistinguishable to viewers.
+- **FR-17:** Taken-down IDs also return HTTP 404.
 
 ### 4.4 Expiration
-- **FR-18:** Every paste expires after a TTL set by the admin via configuration (`PASTE_TTL_DAYS`, §7.4). Users cannot choose or change it.
-- **FR-19:** `expires_at` is computed and stored at creation time. **[Decision]** Changing the TTL affects only pastes created afterward, so a link's lifetime never changes after it's shared.
+- **FR-18:** Every paste expires after a TTL set by the admin via 
+  configuration (`PASTE_TTL_DAYS`, §7.4). Users cannot choose or change it, 
+  but the users shall be alerted to the TTL at the time of paste creation.
+- **FR-19:** `expires_at` is computed and stored at creation time. Changing 
+  the TTL affects only pastes created afterward, so a link's lifetime never 
+  changes after it's shared.
 - **FR-20:** Expiry is enforced at read time (`expires_at > now`), so expired pastes stop being served immediately regardless of purge timing.
-- **FR-21:** A background thread purges expired rows periodically. **[Decision]** Hourly.
+- **FR-21:** A background thread purges expired rows daily.
 
 ### 4.5 Deletion & takedown
 - **FR-22:** Users cannot delete or edit pastes. Pastes are immutable once created.
@@ -110,7 +114,11 @@ type CreateAPI =
 The `AuthHandler Request User` is built at startup from config, so changing auth mechanisms means providing a different `AuthHandler` (and auth routes). Handler code stays the same.
 
 ### 5.3 Interim mechanism (v1)
-**[Decision]** Until the real flow is built, the `AuthHandler` validates HTTP Basic credentials against an admin-managed list (`AUTH_USERS_FILE`, containing usernames + password hashes, e.g. bcrypt/argon2). This is real protection, trivial at this traffic level, and needs no session storage. It is explicitly temporary.
+Until the real flow is built, the `AuthHandler` validates HTTP Basic 
+credentials against an admin-managed list (`AUTH_USERS_FILE`, containing 
+usernames + password hashes, e.g. bcrypt/argon2). This is real protection, 
+trivial at this traffic level, and needs no session storage. It is 
+explicitly temporary.
 
 ### 5.4 Target flow (to be designed)
 Sketch, assuming cookie-based sessions:
@@ -139,16 +147,18 @@ CREATE TABLE sessions (token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERE
 
 ## 6. Admin Operations
 
-Admin actions happen through a CLI subcommand of the same executable, run on the host against the same SQLite file. **[Decision]** This avoids exposing any admin web surface; SQLite WAL mode allows this while the server runs.
+Admin actions happen through a CLI subcommand of the same executable, run on 
+the host against the same SQLite file. SQLite WAL mode allows this while the 
+server runs.
 
 ```
 movie-night serve                                   # run the web server
-movie-night takedown <id> --reason "<text>"         # erase content, leave 410 tombstone
+movie-night takedown <id> .                         # erase content
 movie-night show <id>                               # print metadata (created_at, created_by, expires_at, status)
 movie-night purge-expired                           # run the purge job once, on demand
 ```
 
-- Takedowns are logged (ID, reason, timestamp; never content).
+- Takedowns are not logged, and are indistinguishable from unrecognized ids.
 - TTL is configured via `PASTE_TTL_DAYS` and takes effect on server restart.
 - CLI parsing via `optparse-applicative`.
 
@@ -207,7 +217,7 @@ CREATE INDEX IF NOT EXISTS pastes_expires_at ON pastes(expires_at);
 
 - Enable WAL mode (`PRAGMA journal_mode=WAL`) and a busy timeout so the CLI and server coexist.
 - Schema initialization runs at startup (idempotent).
-- The purge job deletes rows where `expires_at <= now`. It also deletes tombstones past their original expiry, since collisions are negligible at this ID space. **[Decision]**
+- The purge job deletes rows where `expires_at <= now`.
 - DB file path is configurable and must reside on a persistent volume.
 
 ### 7.4 Configuration (environment variables)
@@ -218,7 +228,7 @@ CREATE INDEX IF NOT EXISTS pastes_expires_at ON pastes(expires_at);
 | `DB_PATH` | `./data/pastes.db` | SQLite file |
 | `BASE_URL` | `http://localhost:8080` | Used to build short URLs |
 | `MAX_PASTE_BYTES` | `524288` | Size limit |
-| `PASTE_TTL_DAYS` | `30` **[Decision]** | Lifetime of newly created pastes |
+| `PASTE_TTL_DAYS` | `30` | Lifetime of newly created pastes |
 | `AUTH_USERS_FILE` | `./data/users` | Interim Basic-auth credentials (§5.3) |
 
 ## 8. Presentation
@@ -234,7 +244,8 @@ CREATE INDEX IF NOT EXISTS pastes_expires_at ON pastes(expires_at);
 - **NFR-2:** Response headers: `Content-Security-Policy: default-src 'none'; style-src 'self' 'unsafe-inline'`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`.
 - **NFR-3:** Raw endpoint always served as `text/plain` so browsers never sniff it as HTML.
 - **NFR-4:** Request body size enforced at the WAI layer before full body read.
-- **NFR-5:** **[Decision]** Per-user rate limit on paste creation (e.g. 30/min). This is low priority given authentication and expected traffic.
+- **NFR-5:** Per-user rate limit on paste creation (e.g. 30/min). This is 
+  low priority given authentication and expected traffic.
 - **NFR-6:** Parameterized SQL queries only.
 - **NFR-7:** Deployed behind HTTPS (terminated at reverse proxy). This is required, since interim Basic auth sends credentials on every request.
 - **NFR-8:** Credentials and session tokens are stored only as hashes.
