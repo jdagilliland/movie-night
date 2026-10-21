@@ -312,6 +312,17 @@ Route ordering: fixed paths (`/healthz`, `/static/*`, future `/auth/*`) must be 
   - Backups (NFR-13): the SQLite DB is backed up to S3 (e.g. Litestream or nightly
     snapshots).
   - Terraform state is stored remotely in S3 with locking.
+  - Region: `us-east-1`.
+  - Admin access: SSH with a key pair. The security group allows port 22 only
+    from admin-specified CIDRs (a Terraform variable).
+  - Architecture: ARM64 only (Graviton, e.g. t4g). Images are built on GitHub
+    Actions native ARM runners (`ubuntu-24.04-arm`), not under QEMU emulation, with
+    the Cabal store cached between runs.
+  - CI pushes images to ECR, authenticating via GitHub OIDC with a Terraform-managed
+    IAM role (no long-lived AWS keys in GitHub).
+  - Deploys are manual at first: pull the new image and restart on the instance.
+  - Cost monitoring: an AWS Budgets budget of $10/month, alerting by email on 100%
+    of actual spend and 100% of forecasted spend. Alerts only, no automatic actions.
 
 ## 13. Deliverables
 
