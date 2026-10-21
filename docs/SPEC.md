@@ -44,7 +44,7 @@ A minimal web application where an authenticated user pastes text, submits it, a
 - **FR-2:** Submitting (`POST /`) requires authentication. It stores the text and the creator's identity and returns a unique short ID.
 - **FR-3:** After submission, the user is redirected (303) to the paste's view page, which displays its full URL with a "copy link" control.
 - **FR-4:** Empty or whitespace-only submissions are rejected with a validation message.
-- **FR-5:** Submissions over the maximum size are rejected. Limit: 512 KiB of UTF-8 text.
+- **FR-5:** Submissions over the maximum size are rejected. Limit: 512 KiB of UTF-8 text (`MAX_PASTE_BYTES`), measured on the decoded text, not the encoded request body (see NFR-4).
 - **FR-6:** Text is stored exactly as received, except line endings normalized to `\n`.
 
 ### 4.2 Short links
@@ -59,7 +59,7 @@ A minimal web application where an authenticated user pastes text, submits it, a
 - **FR-12:** Viewing is public; no authentication is required or checked.
 - **FR-13:** `GET /<id>` returns an HTML page displaying the text in a `<pre>` block, with all content HTML-escaped.
 - **FR-14:** `GET /<id>/raw` returns the text as `text/plain; charset=utf-8`.
-- **FR-15:** The view page shows only: the text, creation timestamp, expiry timestamp, a "copy link" control, a "raw" link, and a "new paste" link.
+- **FR-15:** The view page shows only: the text, creation timestamp, expiry timestamp, a "copy link" control, a "raw" link, and a "new paste" link. All timestamps are displayed in UTC and labeled as such.
 - **FR-16:** Unknown **or expired** IDs return HTTP 404 with a minimal "Paste not found" page. Expired and never-existed are indistinguishable to viewers.
 - **FR-17:** Taken-down IDs return HTTP 404 with the same page as unknown IDs. Taken-down and never-existed are indistinguishable to viewers.
 
@@ -115,9 +115,28 @@ The `AuthHandler Request User` is built at startup from config, so changing auth
 ### 5.3 Interim mechanism (v1)
 Until the real flow is built, the `AuthHandler` validates HTTP Basic 
 credentials against an admin-managed list (`AUTH_USERS_FILE`, containing 
-usernames + password hashes, e.g. bcrypt/argon2). This is real protection, 
+usernames + argon2id password hashes). This is real protection, 
 trivial at this traffic level, and needs no session storage. It is 
 explicitly temporary.
+
+Users file format: one user per line, `username:hash`, where the hash is an
+argon2id string in PHC format (`$argon2id$v=19$m=19456,t=2,p=1$<salt>$<hash>`).
+
+```
+# comments and blank lines are ignored
+alice:$argon2id$v=19$m=19456,t=2,p=1$c2FsdHNhbHQ$aGFzaGhhc2hoYXNo
+```
+
+- Usernames match `[a-z0-9_-]{1,32}`. The username is the value stored in
+  `created_by`.
+- Hash parameters follow the OWASP minimum (19 MiB memory, 2 iterations,
+  1 lane). The hash is verified on every authenticated request.
+- The file must be mode `0600`; the server refuses to start otherwise.
+- The file is read at startup. User changes take effect on restart.
+- Users are managed with the `add-user`, `set-password`, and `remove-user` CLI
+  subcommands (§6).
+- Basic auth has no logout. The browser's native credential dialog serves as
+  the sign-in prompt (FR-1). Both limitations are accepted for the interim.
 
 ### 5.4 Target flow (to be designed)
 Sketch, assuming cookie-based sessions:
@@ -155,9 +174,12 @@ movie-night serve                                   # run the web server
 movie-night takedown <id> --reason "<text>"         # erase content, log takedown
 movie-night show <id>                               # print metadata (created_at, created_by, expires_at, status)
 movie-night purge-expired                           # run the purge job once, on demand
+movie-night add-user <name>                         # prompt for password twice; fail if user exists
+movie-night set-password <name>                     # prompt for password; replace the hash
+movie-night remove-user <name>                      # remove the user; their pastes are unaffected
 ```
 
-- Takedowns are logged: the ID, reason, and timestamp are recorded in the log, never the content. The DB row keeps `taken_down_at` and `takedown_reason`.
+- Takedowns are logged to an append-only file (`TAKEDOWN_LOG`, §7.4): the ID, reason, and UTC timestamp, never the content. The DB row keeps `taken_down_at` and `takedown_reason` until purged, so the log is the lasting record. It is used to re-apply takedowns after a restore (NFR-13) and must be included in backups.
 - `--reason` is required for `takedown`.
 - Public responses for taken-down IDs are indistinguishable from unrecognized IDs (404). The CLI reports takedown status, including already-removed and nonexistent IDs (FR-25).
 - TTL is configured via `PASTE_TTL_DAYS` and takes effect on server restart.
@@ -179,7 +201,7 @@ Purge thread (daily)  ───────────────────�
 - **HTML:** `servant-lucid` + `lucid2` (auto-escapes text)
 - **Persistence:** SQLite via `sqlite-simple`
 - **Random IDs:** `crypton` (or `entropy`) for secure random bytes
-- **Password hashing (interim auth):** `crypton` (argon2) or `bcrypt`
+- **Password hashing (interim auth):** `crypton` (argon2id)
 - **CLI:** `optparse-applicative`
 - **Config:** environment variables
 - **Testing:** `hspec`, `hspec-wai`, `QuickCheck`
@@ -231,6 +253,7 @@ CREATE INDEX IF NOT EXISTS pastes_expires_at ON pastes(expires_at);
 | `MAX_PASTE_BYTES` | `524288` | Size limit |
 | `PASTE_TTL_DAYS` | `30` | Lifetime of newly created pastes |
 | `AUTH_USERS_FILE` | `./data/users` | Interim Basic-auth credentials (§5.3) |
+| `TAKEDOWN_LOG` | `./data/takedowns.log` | Append-only takedown log (§6) |
 
 ## 8. Presentation
 
@@ -245,7 +268,7 @@ CREATE INDEX IF NOT EXISTS pastes_expires_at ON pastes(expires_at);
 - **NFR-1:** All user content is HTML-escaped on render; never interpreted as markup.
 - **NFR-2:** Response headers: `Content-Security-Policy: default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self'`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`.
 - **NFR-3:** Raw endpoint always served as `text/plain` so browsers never sniff it as HTML.
-- **NFR-4:** Request body size enforced at the WAI layer before full body read.
+- **NFR-4:** Request body size is enforced at the WAI layer before the full body is read. The cap is 3 × `MAX_PASTE_BYTES` + 4 KiB, which allows for worst-case URL-encoding growth. The handler then checks the decoded text against `MAX_PASTE_BYTES` (FR-5). Both rejections return 413.
 - **NFR-5:** Per-user rate limit on paste creation (e.g. 30/min). This is 
   low priority given authentication and expected traffic.
 - **NFR-6:** Parameterized SQL queries only.
@@ -259,7 +282,7 @@ CREATE INDEX IF NOT EXISTS pastes_expires_at ON pastes(expires_at);
 ### 9.3 Reliability & Operations
 - **NFR-11:** Request logging (Apache-style); takedown events are logged (§6). Paste content and credentials are never logged.
 - **NFR-12:** `GET /healthz` returns 200 when the DB is reachable.
-- **NFR-13:** SQLite file is backed up regularly (e.g. `sqlite3 .backup` or Litestream). Takedowns should be re-applied if restoring from a backup older than the takedown.
+- **NFR-13:** The data volume (database, takedown log, users file, TLS certificates) is backed up by daily EBS snapshots (§12). Takedowns recorded in the log after the snapshot are re-applied after a restore.
 
 ## 10. Endpoints (v1)
 
@@ -284,6 +307,8 @@ Route ordering: fixed paths (`/healthz`, `/static/*`, future `/auth/*`) must be 
   - 404 (unknown), 404 (expired: insert with past `expires_at`), 404 (taken down), 400, 413.
   - View page includes the expiry notice and the copy control; `/static/copy.js` is served.
   - HTML escaping (`<script>` renders literally); security headers present (including CSP `script-src`).
+- **Size limits:** decoded text at exactly `MAX_PASTE_BYTES` is accepted even when its encoded body is larger; one byte over → 413; an oversized raw body → 413.
+- **Users file:** parsing accepts comments and blank lines and rejects malformed lines; the server refuses to start on a world-readable file; `add-user` / `set-password` / `remove-user` round-trip.
 - **Admin:** takedown erases content, yields 404 publicly, and is logged; repeat takedown is idempotent; purge removes only expired rows.
 - **Persistence:** create paste, restart app against the same DB file, fetch succeeds.
 
@@ -295,30 +320,51 @@ Route ordering: fixed paths (`/healthz`, `/static/*`, future `/auth/*`) must be 
   - `GET /api/pastes/:id` → 200 `{"id","content","createdAt","expiresAt"}`
   - These would be protected by the same auth seam (likely API tokens).
 - AWS deployment:
-  - The application will run on AWS, with all infrastructure defined in Terraform.
+  - The application will run on AWS, with all infrastructure defined in OpenTofu.
   - Infrastructure must be the cheapest possible, using the free tier where available.
     Free-tier eligibility of the account is unknown, so the design targets the lowest
     steady-state cost and treats any free tier as a bonus.
-  - Compute: a single small EC2 instance (t4g/t3 micro class) with an EBS volume
-    holding the SQLite file (§7.3).
+  - Compute: a single small EC2 instance (t4g micro class) with a root volume and a
+    separate EBS data volume. The data volume is marked `prevent_destroy`, so
+    replacing the instance never touches data.
+  - Data volume: mounted on the host at `/var/lib/movie-night` (by UUID, `nofail`):
+
+    ```
+    /var/lib/movie-night/
+    ├── db/pastes.db          (+ -wal, -shm)
+    ├── logs/takedowns.log
+    ├── users                 (0600)
+    └── caddy/                (TLS certificates; persisted to avoid Let's Encrypt rate limits)
+    ```
+
+  - Runtime: Docker Compose (app + Caddy), run by a systemd unit so it starts on boot
+    and restarts on failure. The app container mounts `/var/lib/movie-night` at
+    `/data`, with `DB_PATH=/data/db/pastes.db`, `AUTH_USERS_FILE=/data/users`, and
+    `TAKEDOWN_LOG=/data/logs/takedowns.log`.
+  - Admin CLI commands run inside the app container
+    (`docker compose exec app movie-night ...`), so they see the same paths as the
+    server.
   - Networking: an Elastic IP, so the DNS record stays stable across instance
     replacement. AWS bills public IPv4 addresses hourly outside the free tier, which is
     expected to be the main fixed cost.
   - DNS: the domain is managed outside AWS. An A record points at the Elastic IP,
-    so Terraform doesn't manage DNS.
+    so OpenTofu doesn't manage DNS.
   - HTTPS (NFR-7): TLS terminates on the instance (e.g. Caddy with Let's Encrypt).
     No load balancer, since an ALB alone would exceed the target cost.
   - Images: built Docker images are pushed to ECR and pulled by the instance.
-  - Backups (NFR-13): the SQLite DB is backed up to S3 (e.g. Litestream or nightly
-    snapshots).
-  - Terraform state is stored remotely in S3 with locking.
+  - Backups (NFR-13): daily EBS snapshots of the data volume via Data Lifecycle
+    Manager, with a retention count set by an OpenTofu variable. SQLite in WAL mode
+    recovers cleanly from a crash-consistent snapshot. Up to one day of data can be
+    lost.
+  - OpenTofu state is stored remotely in S3, using S3-native locking (`use_lockfile`),
+    so no DynamoDB table is needed.
   - Region: `us-east-1`.
   - Admin access: SSH with a key pair. The security group allows port 22 only
-    from admin-specified CIDRs (a Terraform variable).
+    from admin-specified CIDRs (an OpenTofu variable).
   - Architecture: ARM64 only (Graviton, e.g. t4g). Images are built on GitHub
     Actions native ARM runners (`ubuntu-24.04-arm`), not under QEMU emulation, with
     the Cabal store cached between runs.
-  - CI pushes images to ECR, authenticating via GitHub OIDC with a Terraform-managed
+  - CI pushes images to ECR, authenticating via GitHub OIDC with an OpenTofu-managed
     IAM role (no long-lived AWS keys in GitHub).
   - Deploys are manual at first: pull the new image and restart on the instance.
   - Cost monitoring: an AWS Budgets budget of $10/month, alerting by email on 100%
@@ -326,6 +372,7 @@ Route ordering: fixed paths (`/healthz`, `/static/*`, future `/auth/*`) must be 
 
 ## 13. Deliverables
 
-- Cabal (or Stack) project with `app/`, `src/`, `test/` layout
+- Stack project with `app/`, `src/`, `test/` layout (toolchain installed via ghcup)
 - `Dockerfile` with a volume mount for the DB
+- Docker Compose file (app + Caddy) and systemd unit for the instance
 - `README` covering build, run, configuration, admin CLI usage, and interim auth setup
