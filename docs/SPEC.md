@@ -1,0 +1,287 @@
+# Spec: Paste & Share Content Store
+
+Items marked **[Decision]** are defaults chosen in the absence of explicit requirements and may be revised.
+
+## 1. Overview
+
+A minimal web application where an authenticated user pastes text, submits it, and receives a short link. Anyone following that link (no login required) sees the original text, rendered with minimal styling. Content is stored durably, survives server restarts, and expires after an admin-configured period. Admins can take down content.
+
+## 2. Goals & Non-Goals
+
+**Goals**
+- Create a paste from plain text with minimal friction (browser flow first).
+- Return a short, random, shareable URL.
+- Display pasted text faithfully (whitespace and line breaks preserved).
+- Persist data across restarts/redeploys.
+- Expire pastes after an admin-configured TTL.
+- Let admins take down content.
+- Require authentication to create; viewing is public.
+- Backend in Haskell using Servant.
+
+**Non-Goals (v1)**
+- User-initiated deletion or editing of pastes
+- User-selectable expiration
+- Custom (user-chosen) slugs
+- Password-protected pastes
+- JSON API (deferred; see §12)
+- Syntax highlighting, Markdown rendering, or rich text
+- File/binary uploads
+- Search or listing of pastes
+- Horizontal scaling (traffic is expected to be very low; single instance + SQLite)
+
+## 3. User Stories
+
+1. **Create:** As a signed-in user, I can paste text into a textbox and submit it, so that I receive a short link.
+2. **Share:** As a user, I can easily copy the short link, so that I can send it to others.
+3. **View:** As anyone (signed in or not), I can open the link and read the text exactly as written.
+4. **Raw access:** As a technical user, I can fetch the raw text (e.g. with `curl`).
+5. **Not found:** As a recipient of a bad or expired link, I see a clear "not found" message.
+6. **Removed:** As a recipient of a taken-down link, I see a clear "removed" message.
+7. **Takedown:** As an admin, I can take down a paste by ID so its content is no longer served.
+8. **Expiry config:** As an admin, I can configure how long pastes live.
+
+## 4. Functional Requirements
+
+### 4.1 Creating a paste
+- **FR-1:** The home page (`GET /`) presents a single textarea and a submit button to signed-in users. Anonymous visitors see a sign-in prompt instead (see §5).
+- **FR-2:** Submitting (`POST /`) requires authentication. It stores the text and the creator's identity and returns a unique short ID.
+- **FR-3:** After submission, the user is redirected (303) to the paste's view page, which displays its full URL with a "copy" affordance.
+- **FR-4:** Empty or whitespace-only submissions are rejected with a validation message.
+- **FR-5:** Submissions over the maximum size are rejected. **[Decision]** Limit: 512 KiB of UTF-8 text.
+- **FR-6:** Text is stored exactly as received, except line endings normalized to `\n`. **[Decision]**
+
+### 4.2 Short links
+- **FR-7:** IDs are always server-generated; users cannot choose them.
+- **FR-8:** IDs are random base62 strings (`[0-9A-Za-z]`). **[Decision]** Length 8 (~2.18 × 10¹⁴ space).
+- **FR-9:** IDs are generated with a cryptographically secure RNG so they are not guessable/enumerable.
+- **FR-10:** On ID collision (including with a taken-down tombstone), the server retries generation (up to N times, then 500).
+- **FR-11:** URL format: `https://<host>/<id>`.
+
+### 4.3 Viewing a paste
+- **FR-12:** Viewing is public; no authentication is required or checked.
+- **FR-13:** `GET /<id>` returns an HTML page displaying the text in a `<pre>` block, with all content HTML-escaped.
+- **FR-14:** `GET /<id>/raw` returns the text as `text/plain; charset=utf-8`.
+- **FR-15:** The view page shows only: the text, creation timestamp, expiry timestamp, a "raw" link, and a "new paste" link.
+- **FR-16:** Unknown **or expired** IDs return HTTP 404 with a minimal "Paste not found" page. **[Decision]** Expired and never-existed are indistinguishable to viewers.
+- **FR-17:** Taken-down IDs return HTTP 410 Gone with a minimal "This paste has been removed" page. **[Decision]**
+
+### 4.4 Expiration
+- **FR-18:** Every paste expires after a TTL set by the admin via configuration (`PASTE_TTL_DAYS`, §7.4). Users cannot choose or change it.
+- **FR-19:** `expires_at` is computed and stored at creation time. **[Decision]** Changing the TTL affects only pastes created afterward, so a link's lifetime never changes after it's shared.
+- **FR-20:** Expiry is enforced at read time (`expires_at > now`), so expired pastes stop being served immediately regardless of purge timing.
+- **FR-21:** A background thread purges expired rows periodically. **[Decision]** Hourly.
+
+### 4.5 Deletion & takedown
+- **FR-22:** Users cannot delete or edit pastes. Pastes are immutable once created.
+- **FR-23:** Admins can take down a paste by ID via an admin CLI (§6).
+- **FR-24:** Takedown permanently erases the paste content and leaves a tombstone row (ID, `taken_down_at`, reason) so the link returns 410 and the ID is never reissued.
+- **FR-25:** Takedown is idempotent; taking down an already-removed or nonexistent ID reports that clearly and exits non-zero for nonexistent.
+
+### 4.6 Persistence
+- **FR-26:** Pastes survive application restarts.
+
+## 5. Authentication (stub plan)
+
+Creating a paste requires authentication; viewing never does. The final auth mechanism is not yet decided. This section fixes the **seam** so it can be swapped in without touching handlers, and records the questions to resolve.
+
+### 5.1 Requirements fixed now
+- **AUTH-1:** Only `GET /` (form rendering), `POST /`, and auth routes are auth-aware. View routes (`/:id`, `/:id/raw`) never inspect credentials.
+- **AUTH-2:** Handlers receive an authenticated `User` value from a Servant auth combinator; they never parse credentials themselves.
+- **AUTH-3:** Each paste records `created_by` (user identifier) for abuse investigation.
+- **AUTH-4:** Unauthenticated `POST /` returns 401 (or redirects to sign-in for browser requests).
+
+### 5.2 Seam in the Servant API
+
+```haskell
+-- Generalized auth: the handler for "session" is supplied via Servant's Context
+type instance AuthServerData (AuthProtect "session") = User
+
+data User = User
+  { userId      :: UserId
+  , displayName :: Text
+  }
+
+type CreateAPI =
+       AuthProtect "session" :> Get '[HTML] HomePage
+  :<|> AuthProtect "session" :> ReqBody '[FormUrlEncoded] PasteForm
+         :> Verb 'POST 303 '[HTML] (Headers '[Header "Location" Text] NoContent)
+```
+
+The `AuthHandler Request User` is built at startup from config, so changing auth mechanisms means providing a different `AuthHandler` (and auth routes). Handler code stays the same.
+
+### 5.3 Interim mechanism (v1)
+**[Decision]** Until the real flow is built, the `AuthHandler` validates HTTP Basic credentials against an admin-managed list (`AUTH_USERS_FILE`, containing usernames + password hashes, e.g. bcrypt/argon2). This is real protection, trivial at this traffic level, and needs no session storage. It is explicitly temporary.
+
+### 5.4 Target flow (to be designed)
+Sketch, assuming cookie-based sessions:
+
+1. Anonymous user visits `/` → sees "Sign in to create a paste".
+2. `GET /auth/login` → starts login with the chosen identity method.
+3. Callback/verification route → on success, create a row in `sessions`, set an `HttpOnly; Secure; SameSite=Lax` session cookie, redirect to `/`.
+4. `AuthHandler` reads the cookie, looks up the session, yields `User` or rejects.
+5. `POST /auth/logout` → deletes session row, clears cookie.
+6. `POST /` is protected against CSRF (SameSite cookie + per-session form token).
+
+Likely schema additions:
+
+```sql
+CREATE TABLE users    (id TEXT PRIMARY KEY, external_id TEXT UNIQUE, display_name TEXT, created_at TEXT NOT NULL);
+CREATE TABLE sessions (token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id),
+                       created_at TEXT NOT NULL, expires_at TEXT NOT NULL);
+```
+
+### 5.5 Auth open questions
+1. **Identity method:** OAuth/OIDC with an external provider (GitHub, Google, company SSO)? Email magic links? Local username/password?
+2. **Who may sign up:** Anyone, an allowlist of users/domains, or admin-invited only?
+3. **Admin identity:** Should admins eventually be web users with an admin role, or stay CLI-only (§6)?
+4. **Session lifetime:** How long before re-login is required?
+5. **Account suspension:** Should takedown also be able to suspend the creator?
+
+## 6. Admin Operations
+
+Admin actions happen through a CLI subcommand of the same executable, run on the host against the same SQLite file. **[Decision]** This avoids exposing any admin web surface; SQLite WAL mode allows this while the server runs.
+
+```
+movie-night serve                                   # run the web server
+movie-night takedown <id> --reason "<text>"         # erase content, leave 410 tombstone
+movie-night show <id>                               # print metadata (created_at, created_by, expires_at, status)
+movie-night purge-expired                           # run the purge job once, on demand
+```
+
+- Takedowns are logged (ID, reason, timestamp; never content).
+- TTL is configured via `PASTE_TTL_DAYS` and takes effect on server restart.
+- CLI parsing via `optparse-applicative`.
+
+## 7. Architecture
+
+```
+Browser / curl ──HTTP──▶ Warp ──▶ WAI middleware ──▶ Servant handlers ──▶ Storage interface ──▶ SQLite
+                                  (logging, size limit,  │                  (record of functions)   ▲
+                                   security headers)     └─ AuthHandler ──▶ user list / sessions    │
+                                                                                                    │
+Admin CLI (takedown / show / purge-expired) ────────────────────────────────────────────────────────┤
+Purge thread (hourly) ──────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 7.1 Suggested libraries
+- **Server:** `servant`, `servant-server`, `warp`, `wai-extra` (logging, request size limit)
+- **HTML:** `servant-lucid` + `lucid2` (auto-escapes text)
+- **Persistence:** SQLite via `sqlite-simple`
+- **Random IDs:** `crypton` (or `entropy`) for secure random bytes
+- **Password hashing (interim auth):** `crypton` (argon2) or `bcrypt`
+- **CLI:** `optparse-applicative`
+- **Config:** environment variables
+- **Testing:** `hspec`, `hspec-wai`, `QuickCheck`
+
+### 7.2 Storage abstraction
+Handlers depend on a record interface, not SQLite directly, so tests can use an in-memory implementation:
+
+```haskell
+data LookupResult
+  = Found Paste
+  | Removed            -- taken down
+  | NotFound           -- never existed or expired
+
+data Store = Store
+  { storeInsert       :: Paste -> IO (Either InsertError ())     -- DuplicateId on collision
+  , storeLookup       :: UTCTime -> PasteId -> IO LookupResult   -- "now" passed in for testable expiry
+  , storeTakedown     :: PasteId -> Text -> UTCTime -> IO TakedownResult
+  , storePurgeExpired :: UTCTime -> IO Int                       -- rows purged
+  }
+```
+
+### 7.3 Database schema
+
+```sql
+CREATE TABLE IF NOT EXISTS pastes (
+  id               TEXT PRIMARY KEY,
+  content          TEXT,               -- NULL after takedown
+  created_by       TEXT NOT NULL,
+  created_at       TEXT NOT NULL,      -- ISO-8601 UTC
+  expires_at       TEXT NOT NULL,      -- ISO-8601 UTC
+  taken_down_at    TEXT,               -- NULL unless taken down
+  takedown_reason  TEXT
+);
+CREATE INDEX IF NOT EXISTS pastes_expires_at ON pastes(expires_at);
+```
+
+- Enable WAL mode (`PRAGMA journal_mode=WAL`) and a busy timeout so the CLI and server coexist.
+- Schema initialization runs at startup (idempotent).
+- The purge job deletes rows where `expires_at <= now`. It also deletes tombstones past their original expiry, since collisions are negligible at this ID space. **[Decision]**
+- DB file path is configurable and must reside on a persistent volume.
+
+### 7.4 Configuration (environment variables)
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `PORT` | `8080` | HTTP listen port |
+| `DB_PATH` | `./data/pastes.db` | SQLite file |
+| `BASE_URL` | `http://localhost:8080` | Used to build short URLs |
+| `MAX_PASTE_BYTES` | `524288` | Size limit |
+| `PASTE_TTL_DAYS` | `30` **[Decision]** | Lifetime of newly created pastes |
+| `AUTH_USERS_FILE` | `./data/users` | Interim Basic-auth credentials (§5.3) |
+
+## 8. Presentation
+
+- Server-rendered HTML; no JavaScript required (optional tiny inline script for "copy link").
+- Single small inline stylesheet: system monospace font, `white-space: pre-wrap` for wrapping long lines, comfortable max-width, no colors beyond defaults.
+- Responsive and readable on mobile; respects light/dark mode via `prefers-color-scheme`.
+
+## 9. Non-Functional Requirements
+
+### 9.1 Security
+- **NFR-1:** All user content is HTML-escaped on render; never interpreted as markup.
+- **NFR-2:** Response headers: `Content-Security-Policy: default-src 'none'; style-src 'self' 'unsafe-inline'`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`.
+- **NFR-3:** Raw endpoint always served as `text/plain` so browsers never sniff it as HTML.
+- **NFR-4:** Request body size enforced at the WAI layer before full body read.
+- **NFR-5:** **[Decision]** Per-user rate limit on paste creation (e.g. 30/min). This is low priority given authentication and expected traffic.
+- **NFR-6:** Parameterized SQL queries only.
+- **NFR-7:** Deployed behind HTTPS (terminated at reverse proxy). This is required, since interim Basic auth sends credentials on every request.
+- **NFR-8:** Credentials and session tokens are stored only as hashes.
+
+### 9.2 Performance
+- **NFR-9:** Expected traffic is very low; a single instance with SQLite is sufficient. No caching layer.
+- **NFR-10:** p95 latency < 50 ms for view requests on modest hardware.
+
+### 9.3 Reliability & Operations
+- **NFR-11:** Request logging (Apache-style); paste content and credentials are never logged.
+- **NFR-12:** `GET /healthz` returns 200 when the DB is reachable.
+- **NFR-13:** SQLite file is backed up regularly (e.g. `sqlite3 .backup` or Litestream). Takedowns should be re-applied if restoring from a backup older than the takedown.
+
+## 10. Endpoints (v1)
+
+| Method | Path | Auth | Success | Errors |
+|---|---|---|---|---|
+| GET | `/` | required | 200 HTML form | 401 / sign-in prompt |
+| POST | `/` | required | 303 → `/<id>` | 400 empty, 401, 413 too large |
+| GET | `/:id` | none | 200 HTML | 400 malformed, 404 missing/expired, 410 removed |
+| GET | `/:id/raw` | none | 200 text/plain | 400, 404, 410 |
+| GET | `/healthz` | none | 200 | 503 if DB unreachable |
+
+Route ordering: fixed paths (`/healthz`, future `/auth/*`) must be matched before `Capture "pasteId"`. `PasteId` parsing (8-char base62) also prevents them from colliding.
+
+## 11. Testing Requirements
+
+- **Unit:** ID generator output always matches base62/length rules (QuickCheck); `PasteId` parsing rejects malformed input; line-ending normalization; expiry computation from TTL.
+- **Property:** For any non-empty text under the limit, create → fetch raw returns identical content.
+- **Integration (`hspec-wai`):**
+  - Form flow with valid credentials; `POST /` without/with bad credentials → 401.
+  - View routes succeed with no credentials.
+  - 404 (unknown), 404 (expired: insert with past `expires_at`), 410 (taken down), 400, 413.
+  - HTML escaping (`<script>` renders literally); security headers present.
+- **Admin:** takedown erases content and yields 410; repeat takedown is idempotent; purge removes only expired rows.
+- **Persistence:** create paste, restart app against the same DB file, fetch succeeds.
+
+## 12. Future Work
+
+- Real authentication flow (§5.4) replacing interim Basic auth.
+- JSON API, for example:
+  - `POST /api/pastes` → 201 `{"id","url","expiresAt"}`
+  - `GET /api/pastes/:id` → 200 `{"id","content","createdAt","expiresAt"}`
+  - These would be protected by the same auth seam (likely API tokens).
+
+## 13. Deliverables
+
+- Cabal (or Stack) project with `app/`, `src/`, `test/` layout
+- `Dockerfile` with a volume mount for the DB
+- `README` covering build, run, configuration, admin CLI usage, and interim auth setup
