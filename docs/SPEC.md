@@ -294,6 +294,24 @@ Route ordering: fixed paths (`/healthz`, `/static/*`, future `/auth/*`) must be 
   - `POST /api/pastes` → 201 `{"id","url","expiresAt"}`
   - `GET /api/pastes/:id` → 200 `{"id","content","createdAt","expiresAt"}`
   - These would be protected by the same auth seam (likely API tokens).
+- AWS deployment:
+  - The application will run on AWS, with all infrastructure defined in Terraform.
+  - Infrastructure must be the cheapest possible, using the free tier where available.
+    Free-tier eligibility of the account is unknown, so the design targets the lowest
+    steady-state cost and treats any free tier as a bonus.
+  - Compute: a single small EC2 instance (t4g/t3 micro class) with an EBS volume
+    holding the SQLite file (§7.3).
+  - Networking: an Elastic IP, so the DNS record stays stable across instance
+    replacement. AWS bills public IPv4 addresses hourly outside the free tier, which is
+    expected to be the main fixed cost.
+  - DNS: the domain is managed outside AWS. An A record points at the Elastic IP,
+    so Terraform doesn't manage DNS.
+  - HTTPS (NFR-7): TLS terminates on the instance (e.g. Caddy with Let's Encrypt).
+    No load balancer, since an ALB alone would exceed the target cost.
+  - Images: built Docker images are pushed to ECR and pulled by the instance.
+  - Backups (NFR-13): the SQLite DB is backed up to S3 (e.g. Litestream or nightly
+    snapshots).
+  - Terraform state is stored remotely in S3 with locking.
 
 ## 13. Deliverables
 
