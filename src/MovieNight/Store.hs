@@ -4,10 +4,11 @@ module MovieNight.Store
   , LookupResult (..)
   , InsertError (..)
   , TakedownResult (..)
+  , truncateToSecond
   ) where
 
 import Data.Text (Text)
-import Data.Time (UTCTime)
+import Data.Time (UTCTime (..))
 import MovieNight.Paste (Paste)
 import MovieNight.PasteId (PasteId)
 
@@ -34,6 +35,7 @@ data TakedownResult
 -- so expiry is testable without a clock.
 data Store = Store
   { storeInsert :: Paste -> IO (Either InsertError ())
+  -- ^ Paste timestamps are stored truncated to whole seconds.
   , storeLookup :: UTCTime -> PasteId -> IO LookupResult
   -- ^ FR-20: a paste is served only while @now < expiresAt@.
   , storeTakedown :: PasteId -> Text -> UTCTime -> IO TakedownResult
@@ -41,3 +43,6 @@ data Store = Store
   , storePurgeExpired :: UTCTime -> IO Int
   -- ^ FR-21: deletes every paste with @expiresAt <= now@, returning the count.
   }
+
+truncateToSecond :: UTCTime -> UTCTime
+truncateToSecond t = t {utctDayTime = fromInteger (floor (utctDayTime t))}

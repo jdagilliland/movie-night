@@ -2,6 +2,8 @@
 -- spec runs this suite against a fresh store.
 module MovieNight.StoreContract
   ( storeContract
+  , mkPaste
+  , t0
   ) where
 
 import Data.Maybe (fromJust)
@@ -26,8 +28,10 @@ mkPaste pid content =
     , pasteExpiresAt = addUTCTime (30 * nominalDay) t0
     }
 
-storeContract :: IO Store -> Spec
-storeContract newStore = before newStore $ do
+-- | Takes a function that runs each test against a fresh, empty store and
+-- cleans up afterwards.
+storeContract :: (ActionWith Store -> IO ()) -> Spec
+storeContract withFreshStore = around withFreshStore $ do
   let p = mkPaste "abcdEFGH" "hello\nworld"
       other = mkPaste "12345678" "other"
       expiry = pasteExpiresAt p
@@ -44,6 +48,15 @@ storeContract newStore = before newStore $ do
       _ <- storeInsert s p
       _ <- storeInsert s other
       storeLookup s t0 (pasteId other) `shouldReturn` Found other
+
+    it "truncates timestamps to whole seconds" $ \s -> do
+      let fractional =
+            p
+              { pasteCreatedAt = addUTCTime 0.75 (pasteCreatedAt p)
+              , pasteExpiresAt = addUTCTime 0.25 (pasteExpiresAt p)
+              }
+      _ <- storeInsert s fractional
+      storeLookup s t0 (pasteId p) `shouldReturn` Found p
 
     it "FR-10: rejects a duplicate ID" $ \s -> do
       _ <- storeInsert s p

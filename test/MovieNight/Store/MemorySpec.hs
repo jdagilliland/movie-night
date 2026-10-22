@@ -5,4 +5,4 @@ import MovieNight.StoreContract (storeContract)
 import Test.Hspec
 
 spec :: Spec
-spec = storeContract newMemoryStore
+spec = storeContract (newMemoryStore >>=)

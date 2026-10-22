@@ -240,6 +240,9 @@ CREATE INDEX IF NOT EXISTS pastes_expires_at ON pastes(expires_at);
 ```
 
 - Enable WAL mode (`PRAGMA journal_mode=WAL`) and a busy timeout so the CLI and server coexist.
+- Timestamps are stored as fixed-width ISO-8601 UTC text at whole-second
+  precision (`YYYY-MM-DDTHH:MM:SSZ`), truncating any fraction. The fixed
+  width makes text comparison in SQL (e.g. the purge) order correctly.
 - Schema initialization runs at startup (idempotent).
 - The purge job deletes rows where `expires_at <= now`.
 - DB file path is configurable and must reside on a persistent volume.

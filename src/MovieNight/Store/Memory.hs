@@ -25,9 +25,14 @@ newMemoryStore = do
   pure
     Store
       { storeInsert = \paste -> modify $ \m ->
-          if Map.member (pasteId paste) m
-            then (m, Left DuplicateId)
-            else (Map.insert (pasteId paste) (Entry paste Nothing) m, Right ())
+          let stored =
+                paste
+                  { pasteCreatedAt = truncateToSecond (pasteCreatedAt paste)
+                  , pasteExpiresAt = truncateToSecond (pasteExpiresAt paste)
+                  }
+           in if Map.member (pasteId paste) m
+                then (m, Left DuplicateId)
+                else (Map.insert (pasteId paste) (Entry stored Nothing) m, Right ())
       , storeLookup = \now pid -> do
           m <- readIORef ref
           pure $ case Map.lookup pid m of
