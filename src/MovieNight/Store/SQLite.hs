@@ -4,7 +4,7 @@ module MovieNight.Store.SQLite
   ) where
 
 import Control.Concurrent.MVar (newMVar, withMVar)
-import Control.Exception (bracket)
+import Control.Exception (bracket, handle)
 import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Time
@@ -16,6 +16,7 @@ import Data.Time
 import Database.SQLite.Simple
   ( Connection
   , Only (..)
+  , SQLError
   , changes
   , close
   , execute
@@ -111,6 +112,10 @@ sqliteStore withConn =
     , storePurgeExpired = \now -> withConn $ \conn -> do
         execute conn "DELETE FROM pastes WHERE expires_at <= ?" (Only (Timestamp now))
         changes conn
+    , storeHealthy = withConn $ \conn ->
+        handle (\(_ :: SQLError) -> pure False) $ do
+          _ <- query_ conn "SELECT 1" :: IO [Only Int]
+          pure True
     }
 
 -- | A UTC time stored as ISO-8601 text at whole-second precision.

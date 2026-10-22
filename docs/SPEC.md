@@ -296,7 +296,7 @@ CREATE INDEX IF NOT EXISTS pastes_expires_at ON pastes(expires_at);
 | POST | `/` | required | 303 → `/<id>` | 400 empty, 401, 413 too large |
 | GET | `/:id` | none | 200 HTML | 400 malformed, 404 missing, expired, or taken down |
 | GET | `/:id/raw` | none | 200 text/plain | 400, 404 |
-| GET | `/static/copy.js` | none | 200 application/javascript | — |
+| GET | `/static/copy.js` | none | 200 text/javascript | — |
 | GET | `/healthz` | none | 200 | 503 if DB unreachable |
 
 Route ordering: fixed paths (`/healthz`, `/static/*`, future `/auth/*`) must be matched before `Capture "pasteId"`. `PasteId` parsing (8-char base62) also prevents them from colliding.

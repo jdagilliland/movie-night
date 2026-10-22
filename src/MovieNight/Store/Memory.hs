@@ -52,4 +52,5 @@ newMemoryStore = do
       , storePurgeExpired = \now -> modify $ \m ->
           let (expired, kept) = Map.partition ((<= now) . pasteExpiresAt . entryPaste) m
            in (kept, Map.size expired)
+      , storeHealthy = pure True
       }

@@ -42,6 +42,8 @@ data Store = Store
   -- ^ FR-24: erases content; arguments are the reason and the takedown time.
   , storePurgeExpired :: UTCTime -> IO Int
   -- ^ FR-21: deletes every paste with @expiresAt <= now@, returning the count.
+  , storeHealthy :: IO Bool
+  -- ^ NFR-12: whether the underlying storage is reachable.
   }
 
 truncateToSecond :: UTCTime -> UTCTime

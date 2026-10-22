@@ -4,6 +4,7 @@ version:            0.1.0.0
 synopsis:           Paste text, get a short link
 build-type:         Simple
 extra-doc-files:    docs/SPEC.md
+extra-source-files: static/copy.js
 
 common shared
   default-language: GHC2021
@@ -26,9 +27,12 @@ library
   import:           shared
   hs-source-dirs:   src
   exposed-modules:
+    MovieNight.Config
     MovieNight.Content
+    MovieNight.Html
     MovieNight.Paste
     MovieNight.PasteId
+    MovieNight.Server
     MovieNight.Store
     MovieNight.Store.Memory
     MovieNight.Store.SQLite
@@ -37,11 +41,20 @@ library
     containers,
     crypton,
     directory,
+    file-embed,
     filepath,
     http-api-data,
+    http-media,
+    http-types,
+    lucid,
+    servant,
+    servant-lucid,
+    servant-server,
     sqlite-simple,
     text,
-    time
+    time,
+    wai,
+    wai-extra
 
 executable movie-night
   import:           shared
@@ -49,7 +62,11 @@ executable movie-night
   main-is:          Main.hs
   ghc-options:      -threaded -rtsopts "-with-rtsopts=-N"
   build-depends:
-    movie-night
+    movie-night,
+    optparse-applicative,
+    time,
+    wai-extra,
+    warp
 
 test-suite spec
   import:           shared
@@ -57,8 +74,10 @@ test-suite spec
   hs-source-dirs:   test
   main-is:          Spec.hs
   other-modules:
+    MovieNight.ConfigSpec
     MovieNight.ContentSpec
     MovieNight.PasteIdSpec
+    MovieNight.ServerSpec
     MovieNight.Store.MemorySpec
     MovieNight.Store.SQLiteSpec
     MovieNight.StoreContract
@@ -67,10 +86,15 @@ test-suite spec
     hspec-discover:hspec-discover
   build-depends:
     movie-night,
+    bytestring,
     filepath,
     hspec,
+    hspec-wai,
+    http-types,
     QuickCheck,
     sqlite-simple,
     temporary,
     text,
-    time
+    time,
+    wai,
+    wai-extra

@@ -117,3 +117,7 @@ storeContract withFreshStore = around withFreshStore $ do
     it "returns 0 when nothing has expired" $ \s -> do
       _ <- storeInsert s p
       storePurgeExpired s t0 `shouldReturn` 0
+
+  describe "NFR-12: storeHealthy" $
+    it "reports a working store as healthy" $ \s ->
+      storeHealthy s `shouldReturn` True

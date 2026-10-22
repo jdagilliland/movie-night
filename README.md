@@ -15,8 +15,12 @@ it is missing.
 
 ```
 stack build                 # build library, executable, and tests
-stack exec movie-night      # run the executable
+stack exec movie-night -- serve     # run the web server on port 8080
 ```
+
+The server is configured with environment variables (see `docs/SPEC.md`
+§7.4). By default it stores data in `./data/pastes.db`, which is
+git-ignored.
 
 ### Tests
 
