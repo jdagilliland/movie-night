@@ -35,9 +35,10 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends libgmp10 \
  && rm -rf /var/lib/apt/lists/*
 
-# A fixed, unprivileged UID, so the host's data directory can be owned by
-# it (see README, "Deployment").
-RUN useradd --system --uid 10001 --home-dir /data --no-create-home movienight
+# A fixed, unprivileged UID and GID, so the host's data directory can be
+# owned by them (see README, "Deployment").
+RUN groupadd --system --gid 10001 movienight \
+ && useradd --system --uid 10001 --gid 10001 --home-dir /data --no-create-home movienight
 
 COPY --from=build /out/movie-night /usr/local/bin/movie-night
 
