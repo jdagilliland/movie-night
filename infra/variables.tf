@@ -3,6 +3,12 @@ variable "region" {
   default = "us-east-1"
 }
 
+variable "aws_profile" {
+  description = "Named AWS profile to use. Leave null to use the environment (e.g. AWS_PROFILE)."
+  type        = string
+  default     = null
+}
+
 variable "availability_zone" {
   description = "The instance and its data volume must share an AZ. t4g isn't offered in every one."
   type        = string

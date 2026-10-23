@@ -1,3 +1,8 @@
 # Copy to backend.hcl (git-ignored), using the state_bucket output of
 # infra/bootstrap, then: tofu init -backend-config=backend.hcl
 bucket = "movie-night-tofu-state-123456789012"
+
+# The state backend authenticates separately from the AWS provider; set this
+# to the same profile as aws_profile in terraform.tfvars, or omit both to use
+# the environment.
+# profile = "default"

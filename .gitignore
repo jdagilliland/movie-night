@@ -9,4 +9,5 @@ dist-newstyle/
 *.tfstate
 *.tfstate.*
 /infra/terraform.tfvars
+/infra/bootstrap/terraform.tfvars
 /infra/backend.hcl

@@ -1,5 +1,9 @@
 # Copy to terraform.tfvars (git-ignored) and fill in.
 
+# A named AWS profile; omit to use the environment (e.g. AWS_PROFILE). Use
+# the same profile in backend.hcl.
+aws_profile = "default"
+
 domain         = "paste.example.com"
 ssh_public_key = "ssh-ed25519 AAAA... you@example.com"
 

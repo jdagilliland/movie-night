@@ -96,8 +96,10 @@ from its own local CA, so the browser warns about it. `deploy/.env` and
 
 ### Infrastructure
 
-The AWS infrastructure is defined with OpenTofu in `infra/`. Run these with
-AWS credentials for the target account in your shell (e.g. `AWS_PROFILE`).
+The AWS infrastructure is defined with OpenTofu in `infra/`. It uses the AWS
+credentials in your environment (e.g. `AWS_PROFILE`), or a named profile
+set as `aws_profile` in the git-ignored `terraform.tfvars` files and as
+`profile` in `backend.hcl`.
 
 First, get a domain. Registering one in the Route 53 console (Registered
 domains → Register domains) also creates its hosted zone, and OpenTofu then
@@ -110,6 +112,7 @@ OpenTofu never registers, renews, or deletes the domain itself.
 
    ```
    cd infra/bootstrap
+   cp terraform.tfvars.example terraform.tfvars  # only for a named profile
    tofu init
    tofu apply        # note the state_bucket output
    ```
@@ -118,7 +121,7 @@ OpenTofu never registers, renews, or deletes the domain itself.
 
    ```
    cd infra
-   cp backend.hcl.example backend.hcl            # set the bucket
+   cp backend.hcl.example backend.hcl            # bucket, and profile if any
    cp terraform.tfvars.example terraform.tfvars  # domain, SSH key, etc.
    ```
 

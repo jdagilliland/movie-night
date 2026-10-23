@@ -18,8 +18,15 @@ variable "region" {
   default = "us-east-1"
 }
 
+variable "aws_profile" {
+  description = "Named AWS profile to use. Leave null to use the environment (e.g. AWS_PROFILE)."
+  type        = string
+  default     = null
+}
+
 provider "aws" {
-  region = var.region
+  region  = var.region
+  profile = var.aws_profile
 
   default_tags {
     tags = {

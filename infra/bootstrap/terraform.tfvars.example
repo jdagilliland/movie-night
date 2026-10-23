@@ -1,0 +1,2 @@
+# Copy to terraform.tfvars (git-ignored) to use a named AWS profile.
+aws_profile = "default"
