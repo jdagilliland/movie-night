@@ -11,8 +11,10 @@ x-logging: &logging
 
 services:
   app:
+    # Pulled from ECR on the instance. No build section: the host has no
+    # source tree, so Compose must never try to build there. Locally, build
+    # movie-night:local first with `docker build` (see README).
     image: ${MOVIE_NIGHT_IMAGE:-movie-night:local}
-    build: ..
     restart: unless-stopped
     environment:
       BASE_URL: https://${MOVIE_NIGHT_DOMAIN:?set MOVIE_NIGHT_DOMAIN in .env}

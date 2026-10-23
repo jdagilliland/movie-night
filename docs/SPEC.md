@@ -367,9 +367,22 @@ Route ordering: fixed paths (`/healthz`, `/static/*`, future `/auth/*`) must be 
   - Infrastructure must be the cheapest possible, using the free tier where available.
     Free-tier eligibility of the account is unknown, so the design targets the lowest
     steady-state cost and treats any free tier as a bonus.
-  - Compute: a single small EC2 instance (t4g micro class) with a root volume and a
-    separate EBS data volume. The data volume is marked `prevent_destroy`, so
-    replacing the instance never touches data.
+  - Compute: a single t4g.nano EC2 instance (0.5 GB, plus a 1 GB swap file)
+    running Ubuntu 24.04 LTS, with a root volume and a separate EBS data
+    volume. The data volume is marked `prevent_destroy`, so replacing the
+    instance never touches data. CPU credits are `standard`, not the t4g
+    default `unlimited`, so sustained load is throttled rather than billed.
+    The metadata service requires IMDSv2 tokens.
+  - Provisioning: on first boot, user data installs Docker, Compose, and
+    the ECR credential helper; creates the swap file; formats the data
+    volume if it is blank and mounts it; writes the `deploy/` files and
+    `.env` to `/opt/movie-night`; and enables the systemd unit. The admin
+    then creates the first user and starts the unit (README,
+    "Infrastructure"). User data only runs at first boot; later changes to
+    it apply when the instance is replaced.
+  - Network: a dedicated VPC with one public subnet and an internet gateway,
+    and no NAT gateway. The security group allows 80/tcp, 443/tcp, and
+    443/udp from anywhere, and 22/tcp from the admin CIDRs.
   - Data volume: mounted on the host at `/var/lib/movie-night` (by UUID, `nofail`):
 
     ```
@@ -399,20 +412,28 @@ Route ordering: fixed paths (`/healthz`, `/static/*`, future `/auth/*`) must be 
   - HTTPS (NFR-7): TLS terminates on the instance (e.g. Caddy with Let's Encrypt).
     No load balancer, since an ALB alone would exceed the target cost.
   - Images: built Docker images are pushed to ECR and pulled by the instance.
+    ECR keeps the 10 most recent images. The host's Compose file has no
+    build section, so the instance only ever pulls.
   - Backups (NFR-13): daily EBS snapshots of the data volume via Data Lifecycle
     Manager, with a retention count set by an OpenTofu variable. SQLite in WAL mode
     recovers cleanly from a crash-consistent snapshot. Up to one day of data can be
     lost.
   - OpenTofu state is stored remotely in S3, using S3-native locking (`use_lockfile`),
     so no DynamoDB table is needed.
+  - The state bucket is created once by a separate configuration with local
+    state (`infra/bootstrap`); the main configuration is in `infra/`.
   - Region: `us-east-1`.
   - Admin access: SSH with a key pair. The security group allows port 22 only
     from admin-specified CIDRs (an OpenTofu variable).
   - Architecture: ARM64 only (Graviton, e.g. t4g). Images are built on GitHub
-    Actions native ARM runners (`ubuntu-24.04-arm`), not under QEMU emulation, with
-    the Cabal store cached between runs.
-  - CI pushes images to ECR, authenticating via GitHub OIDC with an OpenTofu-managed
-    IAM role (no long-lived AWS keys in GitHub).
+    Actions native ARM runners (`ubuntu-24.04-arm`), not under QEMU
+    emulation. The test job caches the Stack store, and the image job caches
+    Docker layers, between runs.
+  - CI pushes images to ECR as `:<commit>` and `:latest`, only for pushes to
+    `main` that pass the tests. It authenticates via GitHub OIDC with an
+    OpenTofu-managed IAM role (no long-lived AWS keys in GitHub), which only
+    workflows on `main` of this repository can assume, and which may only
+    push to the Movie Night repository.
   - Deploys are manual at first: pull the new image and restart on the instance.
   - Cost monitoring: an AWS Budgets budget of $10/month, alerting by email on 100%
     of actual spend and 100% of forecasted spend. Alerts only, no automatic actions.

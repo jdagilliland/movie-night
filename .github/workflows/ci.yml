@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   build-and-test:
     # Native ARM64 runner: images target Graviton (SPEC §12), and Haskell
@@ -31,3 +34,39 @@ jobs:
 
       - name: Build and test
         run: stack test --system-ghc --no-install-ghc
+
+  # Builds the image and pushes it to ECR as :<commit> and :latest (SPEC
+  # §12). Deploying it is a separate, manual step (README, "Deploying a new
+  # version").
+  image:
+    needs: build-and-test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+      id-token: write # to request the OIDC token for AWS
+    steps:
+      - uses: actions/checkout@v4
+
+      # The role ARN is the github_actions_role_arn output of infra/.
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/arm64
+          push: true
+          tags: |
+            ${{ steps.ecr.outputs.registry }}/movie-night:${{ github.sha }}
+            ${{ steps.ecr.outputs.registry }}/movie-night:latest
+          # Reuses the dependency layers between runs.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

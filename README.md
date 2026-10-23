@@ -83,43 +83,71 @@ The directory's contents are git-ignored.
 ### Trying the stack locally
 
 ```
+docker build -t movie-night:local .
 cd deploy
 printf 'MOVIE_NIGHT_DOMAIN=localhost\nMOVIE_NIGHT_DATA=./data\n' > .env
 docker compose run --rm -it app add-user alice
-docker compose up --build
+docker compose up
 ```
 
 Then open <https://localhost>. Caddy serves `localhost` with a certificate
 from its own local CA, so the browser warns about it. `deploy/.env` and
 `deploy/data/` are git-ignored.
 
-### First setup on the instance
+### Infrastructure
 
-1. Mount the data volume at `/var/lib/movie-night` and give the app's UID
-   the directories it writes to:
+The AWS infrastructure is defined with OpenTofu in `infra/`. Run these with
+AWS credentials for the target account in your shell (e.g. `AWS_PROFILE`).
 
-   ```
-   sudo chown 10001:10001 /var/lib/movie-night
-   sudo install -d -o 10001 -g 10001 /var/lib/movie-night/db /var/lib/movie-night/logs
-   ```
-
-2. Copy `deploy/` to `/opt/movie-night`, and create `/opt/movie-night/.env`
-   from `.env.example` with the domain and the image to run.
-3. Pull the image and create the first user:
+1. Once, create the bucket that holds the state:
 
    ```
-   cd /opt/movie-night
-   docker compose pull
-   docker compose run --rm -it app add-user alice
+   cd infra/bootstrap
+   tofu init
+   tofu apply        # note the state_bucket output
    ```
 
-4. Install and start the systemd unit, which brings the stack up on boot:
+2. Configure the main configuration. Both files are git-ignored:
 
    ```
-   sudo cp movie-night.service /etc/systemd/system/
-   sudo systemctl daemon-reload
-   sudo systemctl enable --now movie-night
+   cd infra
+   cp backend.hcl.example backend.hcl            # set the bucket
+   cp terraform.tfvars.example terraform.tfvars  # domain, SSH key, etc.
    ```
+
+3. Create everything:
+
+   ```
+   tofu init -backend-config=backend.hcl
+   tofu apply
+   ```
+
+4. Point the domain's DNS A record at the `public_ip` output.
+5. In the GitHub repository, set the Actions variable `AWS_ROLE_ARN` to the
+   `github_actions_role_arn` output (Settings → Secrets and variables →
+   Actions → Variables). The next push to `main` builds the image and
+   pushes it to ECR.
+
+On first boot the instance sets itself up: Docker and Compose, the ECR
+credential helper, a swap file, the data volume mounted at
+`/var/lib/movie-night`, the files from `deploy/` in `/opt/movie-night`, and
+the systemd unit, enabled but not started. Once an image is in ECR, SSH in
+(the `ssh_command` output) and start the stack:
+
+```
+cloud-init status --wait    # until first-boot setup has finished
+cd /opt/movie-night
+docker compose pull
+docker compose run --rm -it app add-user alice
+sudo systemctl start movie-night
+```
+
+Caddy obtains the Let's Encrypt certificate on the first HTTPS request,
+which only works once DNS points at the instance.
+
+To rebuild the instance from scratch, run `tofu apply
+-replace=aws_instance.app`. The data volume, including users and pastes, is
+kept and reattached; SSH in and `sudo systemctl start movie-night`.
 
 ### Deploying a new version
 

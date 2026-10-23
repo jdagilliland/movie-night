@@ -5,3 +5,8 @@ dist-newstyle/
 /deploy/data/
 /docker/extra-ca-certs/*
 !/docker/extra-ca-certs/.gitkeep
+.terraform/
+*.tfstate
+*.tfstate.*
+/infra/terraform.tfvars
+/infra/backend.hcl

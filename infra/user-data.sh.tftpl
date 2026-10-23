@@ -1,0 +1,67 @@
+#!/bin/bash
+# First-boot setup for the Movie Night instance (SPEC §12), rendered by
+# OpenTofu (infra/instance.tf). Output: /var/log/cloud-init-output.log
+set -euxo pipefail
+
+# --- Swap: a t4g.nano has 0.5 GB of memory --------------------------------
+if [ ! -f /swapfile ]; then
+  fallocate -l 1G /swapfile
+  chmod 600 /swapfile
+  mkswap /swapfile
+  swapon /swapfile
+  echo '/swapfile none swap sw 0 0' >> /etc/fstab
+fi
+
+# --- Packages ------------------------------------------------------------
+export DEBIAN_FRONTEND=noninteractive
+apt-get update
+apt-get install -y docker.io docker-compose-v2 amazon-ecr-credential-helper
+systemctl enable --now docker
+usermod -aG docker ubuntu
+
+# Pull from ECR with the instance role's credentials, for root (used by the
+# systemd unit) and for the ubuntu admin user.
+for home in /root /home/ubuntu; do
+  mkdir -p "$home/.docker"
+  echo '{"credHelpers": {"${registry}": "ecr-login"}}' > "$home/.docker/config.json"
+done
+chown -R ubuntu:ubuntu /home/ubuntu/.docker
+
+# --- Data volume ---------------------------------------------------------
+# The volume is attached after the instance starts, so wait for it.
+device='${data_device}'
+for _ in $(seq 120); do
+  [ -e "$device" ] && break
+  sleep 5
+done
+[ -e "$device" ] || { echo "data volume $device never appeared" >&2; exit 1; }
+
+# Format only a blank volume; an existing one keeps its data.
+blkid "$device" || mkfs.ext4 -L movie-night "$device"
+uuid=$(blkid -s UUID -o value "$device")
+mkdir -p /var/lib/movie-night
+grep -q "$uuid" /etc/fstab ||
+  echo "UUID=$uuid /var/lib/movie-night ext4 defaults,nofail 0 2" >> /etc/fstab
+systemctl daemon-reload
+mount /var/lib/movie-night
+
+# The app runs as UID 10001 (see Dockerfile).
+chown 10001:10001 /var/lib/movie-night
+install -d -o 10001 -g 10001 /var/lib/movie-night/db /var/lib/movie-night/logs
+
+# --- The stack -----------------------------------------------------------
+mkdir -p /opt/movie-night
+echo '${compose_b64}' | base64 -d > /opt/movie-night/compose.yaml
+echo '${caddyfile_b64}' | base64 -d > /opt/movie-night/Caddyfile
+echo '${unit_b64}' | base64 -d > /opt/movie-night/movie-night.service
+cat > /opt/movie-night/.env <<'EOF'
+MOVIE_NIGHT_DOMAIN=${domain}
+MOVIE_NIGHT_IMAGE=${image}
+PASTE_TTL_DAYS=${paste_ttl_days}
+EOF
+
+# Enabled but not started: the server needs a user first (see README,
+# "Infrastructure"), and the image may not have been pushed yet.
+cp /opt/movie-night/movie-night.service /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable movie-night

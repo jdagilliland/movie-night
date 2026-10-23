@@ -1,0 +1,14 @@
+# Copy to terraform.tfvars (git-ignored) and fill in.
+
+domain         = "paste.example.com"
+ssh_public_key = "ssh-ed25519 AAAA... you@example.com"
+admin_cidrs    = ["203.0.113.7/32"]
+alert_email    = "you@example.com"
+
+# Defaults, shown for reference:
+# instance_type       = "t4g.nano"
+# availability_zone   = "us-east-1a"
+# data_volume_size_gb = 1
+# snapshot_retention  = 7
+# monthly_budget_usd  = 10
+# paste_ttl_days      = 30
