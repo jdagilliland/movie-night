@@ -288,6 +288,12 @@ CREATE INDEX IF NOT EXISTS pastes_expires_at ON pastes(expires_at);
 - The view page has a "copy link" control, implemented with a small script served as a static file (`/static/copy.js`). The link text stays selectable without it.
 - Single small inline stylesheet: system monospace font, `white-space: pre-wrap` for wrapping long lines, comfortable max-width, no colors beyond defaults.
 - Responsive and readable on mobile; respects light/dark mode via `prefers-color-scheme`.
+- On the view page, the paste content is the most prominent feature: full
+  size, monospace, about 80 characters wide. Everything else is slim
+  chrome in small, faded, sans-serif text: a header above the content (the
+  link, "copy link", "raw", "new paste") and a footer below it (creation
+  and expiry timestamps). The fading uses opacity, not a color, so it
+  follows light and dark mode.
 
 ## 9. Non-Functional Requirements
 

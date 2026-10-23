@@ -136,6 +136,15 @@ spec = do
           body r `shouldContainBytes` "Created 2026-10-21 00:00:00 UTC."
           body r `shouldContainBytes` "This paste expires on 2026-11-20 00:00:00 UTC."
 
+      it "puts the link above the content and the timestamps below it" $ do
+        r <- get (path live)
+        let offset needle = BS.length (fst (BS.breakSubstring needle (body r)))
+        liftIO $ do
+          offset "id=\"paste-url\"" `shouldSatisfy` (< offset "<pre>")
+          offset "<pre>" `shouldSatisfy` (< offset "Created ")
+          offset "<header class=\"chrome\">" `shouldSatisfy` (< offset "<pre>")
+          offset "<footer class=\"chrome\">" `shouldSatisfy` (> offset "</pre>")
+
       it "links to the raw view and to a new paste" $ do
         r <- get (path live)
         liftIO $ do
