@@ -473,7 +473,48 @@ Route ordering: fixed paths (`/healthz`, `/static/*`, future `/auth/*`) must be 
     OpenTofu-managed IAM role (no long-lived AWS keys in GitHub), which only
     workflows on `main` of this repository can assume, and which may only
     push to the Movie Night repository.
-  - Deploys are manual at first: pull the new image and restart on the instance.
+  - Continuous deployment: every push to `main` that passes the tests is
+    built and deployed automatically, with no approval step.
+    - Flow: `build-and-test` → `image` (pushes `:<commit>` and `:latest`)
+      → `deploy`. Deploys run one at a time (a GitHub Actions concurrency
+      group); a newer deploy waits rather than cancelling one in progress.
+    - The deploy job assumes the same OIDC role as the image job and runs
+      a deploy script on the instance through Systems Manager Run Command
+      (`aws ssm send-command`, document `AWS-RunShellScript`), targeting
+      the instance by its `Name=movie-night` tag so replacing the instance
+      needs no CI change. No inbound port is needed. The job waits for the
+      command and fails if it fails.
+    - The script lives in the repository (`deploy/deploy.sh`) and is sent
+      with each command, so it is always the version from the commit
+      being deployed.
+    - Deploys pin the commit's image, not `:latest`: the script records the
+      currently deployed image, sets `MOVIE_NIGHT_IMAGE` in
+      `/opt/movie-night/.env` to `<repository>:<commit>`, then runs
+      `docker compose pull app` and `docker compose up --detach app`. The
+      running version is therefore always known, and the previous one is
+      what a rollback restores. Only the app container is recreated; Caddy
+      keeps running, so downtime is a few seconds.
+    - Health check and rollback: the script polls `/healthz` through Caddy
+      on the instance itself (`curl --resolve <domain>:443:127.0.0.1`) for
+      up to about a minute. If it never succeeds, the script restores the
+      previous image, brings it back up, and exits non-zero, so the job
+      fails and GitHub notifies the admin. After a successful deploy, the
+      job also checks `https://<domain>/healthz` from the runner, to cover
+      DNS and TLS; a failure there fails the job but doesn't roll back.
+    - Manual deploys and rollbacks: the workflow can also be run by hand
+      (`workflow_dispatch`) with a commit to deploy. Only images ECR still
+      keeps (the 10 most recent) can be deployed.
+    - Permissions: the CI role additionally gets `ssm:SendCommand` for
+      `AWS-RunShellScript` on instances tagged `Name=movie-night`, and
+      `ssm:GetCommandInvocation` and `ssm:ListCommandInvocations` to wait
+      for results. It still can only be assumed from `main` of this
+      repository.
+    - Out of scope for CD: changes to the other files in `deploy/`
+      (`compose.yaml`, `Caddyfile`, the systemd unit), which reach the
+      instance only when it is replaced or by hand; infrastructure changes,
+      which remain a manual `tofu apply`; and database migrations, which
+      don't exist yet. A schema change would need the deploy script to
+      migrate before switching images.
   - Cost monitoring: an AWS Budgets budget of $10/month, alerting by email on 100%
     of actual spend and 100% of forecasted spend. Alerts only, no automatic actions.
 
