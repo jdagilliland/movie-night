@@ -47,8 +47,8 @@ rateLimit = 3
 -- with one user: alice, password "pw".
 mkApp :: UTCTime -> (Store -> Store) -> IO Application
 mkApp now modifyStore = do
-  store <- newMemoryStore forM_ [live, scripted, leadingNewline, title,
-  takenDown] (storeInsert store)
+  store <- newMemoryStore
+  forM_ [live, scripted, leadingNewline, title, takenDown] (storeInsert store)
   _ <- storeTakedown store (pasteId takenDown) "spam" t0
   aliceHash <- hashPasswordWith cheapParams "pw"
   rateLimiter <- newRateLimiter rateLimit 60
