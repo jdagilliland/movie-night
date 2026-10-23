@@ -23,6 +23,14 @@ The server refuses to start without a users file, so create a user first.
 `set-password` and `remove-user` manage existing users; restart the server
 after any change.
 
+Admin commands work while the server is running:
+
+```
+stack exec movie-night -- takedown <id> --reason "<text>"  # erase content, log it
+stack exec movie-night -- show <id>                        # metadata and status
+stack exec movie-night -- purge-expired                    # purge now (also runs daily)
+```
+
 The server is configured with environment variables (see `docs/SPEC.md`
 §7.4). By default it stores data in `./data/pastes.db`, which is
 git-ignored.

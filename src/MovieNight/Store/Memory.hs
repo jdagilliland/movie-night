@@ -6,8 +6,6 @@ module MovieNight.Store.Memory
 import Data.IORef (atomicModifyIORef', newIORef, readIORef)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
-import Data.Text (Text)
-import Data.Time (UTCTime)
 import MovieNight.Paste (Paste (..))
 import MovieNight.PasteId (PasteId)
 import MovieNight.Store
@@ -15,7 +13,7 @@ import MovieNight.Store
 data Entry = Entry
   { entryPaste :: Paste
   -- ^ Content is blanked once taken down.
-  , entryTakedown :: Maybe (UTCTime, Text)
+  , entryTakedown :: Maybe Takedown
   }
 
 newMemoryStore :: IO Store
@@ -46,9 +44,14 @@ newMemoryStore = do
             Nothing -> (m, NoSuchPaste)
             Just (Entry _ (Just _)) -> (m, AlreadyTakenDown)
             Just (Entry p Nothing) ->
-              ( Map.insert pid (Entry p {pasteContent = ""} (Just (now, reason))) m
+              ( Map.insert pid (Entry p {pasteContent = ""} (Just (Takedown (truncateToSecond now) reason))) m
               , TakenDown
               )
+      , storeInspect = \pid -> do
+          m <- readIORef ref
+          pure $ do
+            Entry p takedown <- Map.lookup pid m
+            Just (PasteInfo (pasteCreatedBy p) (pasteCreatedAt p) (pasteExpiresAt p) takedown)
       , storePurgeExpired = \now -> modify $ \m ->
           let (expired, kept) = Map.partition ((<= now) . pasteExpiresAt . entryPaste) m
            in (kept, Map.size expired)

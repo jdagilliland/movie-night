@@ -27,19 +27,23 @@ library
   import:           shared
   hs-source-dirs:   src
   exposed-modules:
+    MovieNight.Admin
     MovieNight.Config
     MovieNight.Content
     MovieNight.Create
     MovieNight.Html
     MovieNight.Paste
     MovieNight.PasteId
+    MovieNight.Purge
     MovieNight.RateLimit
     MovieNight.Server
     MovieNight.Store
     MovieNight.Store.Memory
     MovieNight.Store.SQLite
+    MovieNight.TakedownLog
     MovieNight.Users
   build-depends:
+    aeson,
     base64-bytestring,
     bytestring,
     containers,
@@ -68,6 +72,7 @@ executable movie-night
   ghc-options:      -threaded -rtsopts "-with-rtsopts=-N"
   build-depends:
     movie-night,
+    async,
     containers,
     directory,
     optparse-applicative,
@@ -82,24 +87,29 @@ test-suite spec
   hs-source-dirs:   test
   main-is:          Spec.hs
   other-modules:
+    MovieNight.AdminSpec
     MovieNight.ConfigSpec
     MovieNight.ContentSpec
     MovieNight.CreateSpec
     MovieNight.PasteIdSpec
+    MovieNight.PurgeSpec
     MovieNight.RateLimitSpec
     MovieNight.ServerSpec
     MovieNight.Store.MemorySpec
     MovieNight.Store.SQLiteSpec
     MovieNight.StoreContract
+    MovieNight.TakedownLogSpec
     MovieNight.UsersSpec
   ghc-options:      -threaded -rtsopts "-with-rtsopts=-N"
   build-tool-depends:
     hspec-discover:hspec-discover
   build-depends:
     movie-night,
+    async,
     base64-bytestring,
     bytestring,
     containers,
+    directory,
     filepath,
     hspec,
     hspec-wai,

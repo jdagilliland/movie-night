@@ -75,7 +75,9 @@ A minimal web application where an authenticated user pastes text, submits it, a
   the TTL affects only pastes created afterward, so a link's lifetime never 
   changes after it's shared.
 - **FR-20:** Expiry is enforced at read time (`expires_at > now`), so expired pastes stop being served immediately regardless of purge timing.
-- **FR-21:** A background thread purges expired rows daily.
+- **FR-21:** A background thread purges expired rows at server startup and
+  then every 24 hours. A failed purge is logged and retried at the next
+  interval.
 
 ### 4.5 Deletion & takedown
 - **FR-22:** Users cannot delete or edit pastes. Pastes are immutable once created.
@@ -187,6 +189,14 @@ movie-night remove-user <name>                      # remove the user; their pas
 ```
 
 - Takedowns are logged to an append-only file (`TAKEDOWN_LOG`, §7.4): the ID, reason, and UTC timestamp, never the content. The DB row keeps `taken_down_at` and `takedown_reason` until purged, so the log is the lasting record. It is used to re-apply takedowns after a restore (NFR-13) and must be included in backups.
+- The log has one JSON object per line, e.g.
+  `{"id":"abcdEFGH","reason":"spam","time":"2026-10-23T12:00:00Z"}`.
+  Only takedowns that erase content are logged; a repeat takedown is not.
+  If the log can't be written after the content is erased, `takedown`
+  exits non-zero and says to record the takedown manually.
+- `show`, `takedown`, and `purge-expired` refuse to run if the database
+  file doesn't exist, rather than creating an empty one, so a wrong
+  `DB_PATH` is reported instead of every paste appearing missing.
 - `--reason` is required for `takedown`.
 - Public responses for taken-down IDs are indistinguishable from unrecognized IDs (404). The CLI reports takedown status, including already-removed and nonexistent IDs (FR-25).
 - TTL is configured via `PASTE_TTL_DAYS` and takes effect on server restart.
@@ -227,7 +237,9 @@ data Store = Store
   { storeInsert       :: Paste -> IO (Either InsertError ())     -- DuplicateId on collision
   , storeLookup       :: UTCTime -> PasteId -> IO LookupResult   -- "now" passed in for testable expiry
   , storeTakedown     :: PasteId -> Text -> UTCTime -> IO TakedownResult
+  , storeInspect      :: PasteId -> IO (Maybe PasteInfo)         -- metadata, any status (`show`)
   , storePurgeExpired :: UTCTime -> IO Int                       -- rows purged
+  , storeHealthy      :: IO Bool                                 -- `/healthz`
   }
 ```
 

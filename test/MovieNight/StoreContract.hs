@@ -118,6 +118,28 @@ storeContract withFreshStore = around withFreshStore $ do
       _ <- storeInsert s p
       storePurgeExpired s t0 `shouldReturn` 0
 
+  describe "§6: storeInspect" $ do
+    let info = PasteInfo "alice" t0 expiry Nothing
+
+    it "returns Nothing for an unknown ID" $ \s ->
+      storeInspect s (pasteId p) `shouldReturn` Nothing
+
+    it "returns a live paste's metadata" $ \s -> do
+      _ <- storeInsert s p
+      storeInspect s (pasteId p) `shouldReturn` Just info
+
+    it "includes the takedown time, truncated to whole seconds, and reason" $ \s -> do
+      _ <- storeInsert s p
+      _ <- storeTakedown s (pasteId p) "spam" (addUTCTime 60.5 t0)
+      storeInspect s (pasteId p)
+        `shouldReturn` Just info {infoTakedown = Just (Takedown (addUTCTime 60 t0) "spam")}
+
+    it "still finds an expired paste until it is purged" $ \s -> do
+      _ <- storeInsert s p
+      storeInspect s (pasteId p) `shouldReturn` Just info
+      _ <- storePurgeExpired s expiry
+      storeInspect s (pasteId p) `shouldReturn` Nothing
+
   describe "NFR-12: storeHealthy" $
     it "reports a working store as healthy" $ \s ->
       storeHealthy s `shouldReturn` True

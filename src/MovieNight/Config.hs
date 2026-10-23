@@ -19,6 +19,7 @@ data Config = Config
   , cfgMaxPasteBytes :: Int
   , cfgPasteTtlDays :: Int
   , cfgAuthUsersFile :: FilePath
+  , cfgTakedownLog :: FilePath
   }
   deriving stock (Eq, Show)
 
@@ -37,6 +38,7 @@ parseConfig lookupVar = do
       , cfgMaxPasteBytes = maxPasteBytes
       , cfgPasteTtlDays = ttlDays
       , cfgAuthUsersFile = withDefault "AUTH_USERS_FILE" "./data/users"
+      , cfgTakedownLog = withDefault "TAKEDOWN_LOG" "./data/takedowns.log"
       }
   where
     withDefault name def = fromMaybe def (lookupVar name)

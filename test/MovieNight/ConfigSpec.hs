@@ -20,6 +20,7 @@ spec =
             , cfgMaxPasteBytes = 524288
             , cfgPasteTtlDays = 30
             , cfgAuthUsersFile = "./data/users"
+            , cfgTakedownLog = "./data/takedowns.log"
             }
 
     it "reads every variable" $
@@ -30,6 +31,7 @@ spec =
         , ("MAX_PASTE_BYTES", "1024")
         , ("PASTE_TTL_DAYS", "7")
         , ("AUTH_USERS_FILE", "/data/users")
+        , ("TAKEDOWN_LOG", "/data/logs/takedowns.log")
         ]
         `shouldBe` Right
           Config
@@ -39,6 +41,7 @@ spec =
             , cfgMaxPasteBytes = 1024
             , cfgPasteTtlDays = 7
             , cfgAuthUsersFile = "/data/users"
+            , cfgTakedownLog = "/data/logs/takedowns.log"
             }
 
     it "strips trailing slashes from BASE_URL" $

@@ -109,6 +109,22 @@ sqliteStore withConn =
             pure $ case existing :: [Only Int] of
               [] -> NoSuchPaste
               _ -> AlreadyTakenDown
+    , storeInspect = \pid -> withConn $ \conn -> do
+        rows <-
+          query conn
+            "SELECT created_by, created_at, expires_at, taken_down_at, takedown_reason\
+            \ FROM pastes WHERE id = ?"
+            (Only (pasteIdText pid))
+        pure $ case rows of
+          [] -> Nothing
+          (createdBy, Timestamp createdAt, Timestamp expiresAt, takenDownAt, reason) : _ ->
+            Just
+              PasteInfo
+                { infoCreatedBy = createdBy
+                , infoCreatedAt = createdAt
+                , infoExpiresAt = expiresAt
+                , infoTakedown = Takedown <$> fmap (\(Timestamp t) -> t) takenDownAt <*> reason
+                }
     , storePurgeExpired = \now -> withConn $ \conn -> do
         execute conn "DELETE FROM pastes WHERE expires_at <= ?" (Only (Timestamp now))
         changes conn

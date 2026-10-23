@@ -4,6 +4,8 @@ module MovieNight.Store
   , LookupResult (..)
   , InsertError (..)
   , TakedownResult (..)
+  , PasteInfo (..)
+  , Takedown (..)
   , truncateToSecond
   ) where
 
@@ -31,6 +33,21 @@ data TakedownResult
   | NoSuchPaste
   deriving stock (Eq, Show)
 
+-- | A paste's metadata, whatever its status (SPEC §6, @show@).
+data PasteInfo = PasteInfo
+  { infoCreatedBy :: Text
+  , infoCreatedAt :: UTCTime
+  , infoExpiresAt :: UTCTime
+  , infoTakedown :: Maybe Takedown
+  }
+  deriving stock (Eq, Show)
+
+data Takedown = Takedown
+  { takedownAt :: UTCTime
+  , takedownReason :: Text
+  }
+  deriving stock (Eq, Show)
+
 -- | Every operation that depends on the current time takes it as an argument,
 -- so expiry is testable without a clock.
 data Store = Store
@@ -39,7 +56,11 @@ data Store = Store
   , storeLookup :: UTCTime -> PasteId -> IO LookupResult
   -- ^ FR-20: a paste is served only while @now < expiresAt@.
   , storeTakedown :: PasteId -> Text -> UTCTime -> IO TakedownResult
-  -- ^ FR-24: erases content; arguments are the reason and the takedown time.
+  -- ^ FR-24: erases content; arguments are the reason and the takedown time,
+  -- which is stored truncated to whole seconds.
+  , storeInspect :: PasteId -> IO (Maybe PasteInfo)
+  -- ^ Metadata for any paste still in storage: live, taken down, or expired
+  -- but not yet purged.
   , storePurgeExpired :: UTCTime -> IO Int
   -- ^ FR-21: deletes every paste with @expiresAt <= now@, returning the count.
   , storeHealthy :: IO Bool
