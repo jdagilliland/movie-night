@@ -10,7 +10,8 @@ resource "aws_key_pair" "admin" {
   public_key = var.ssh_public_key
 }
 
-# The instance may pull images from ECR, and nothing else.
+# The instance may pull images from ECR and register with Systems Manager,
+# and nothing else.
 resource "aws_iam_role" "instance" {
   name = "movie-night-instance"
 
@@ -27,6 +28,14 @@ resource "aws_iam_role" "instance" {
 resource "aws_iam_role_policy_attachment" "instance_ecr_read" {
   role       = aws_iam_role.instance.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+}
+
+# Session Manager: a shell over HTTPS to AWS, for networks where inbound
+# SSH to the instance doesn't get through (e.g. behind Zscaler). The SSM
+# agent ships with Ubuntu's AWS images and only needs this permission.
+resource "aws_iam_role_policy_attachment" "instance_ssm" {
+  role       = aws_iam_role.instance.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
 
 resource "aws_iam_instance_profile" "instance" {
