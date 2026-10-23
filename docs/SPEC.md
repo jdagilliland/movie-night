@@ -44,7 +44,10 @@ A minimal web application where an authenticated user pastes text, submits it, a
 - **FR-2:** Submitting (`POST /`) requires authentication. It stores the text and the creator's identity and returns a unique short ID.
 - **FR-3:** After submission, the user is redirected (303) to the paste's view page, which displays its full URL with a "copy link" control.
 - **FR-4:** Empty or whitespace-only submissions are rejected with a validation message.
-- **FR-5:** Submissions over the maximum size are rejected. Limit: 512 KiB of UTF-8 text (`MAX_PASTE_BYTES`), measured on the decoded text, not the encoded request body (see NFR-4).
+- **FR-5:** Submissions over the maximum size are rejected. Limit: 512 KiB
+  of UTF-8 text (`MAX_PASTE_BYTES`), measured on the decoded text after
+  line-ending normalization (FR-6), i.e. as stored, not on the encoded
+  request body (see NFR-4).
 - **FR-6:** Text is stored exactly as received, except line endings normalized to `\n`.
 
 ### 4.2 Short links
@@ -92,6 +95,10 @@ Creating a paste requires authentication; viewing never does. The final auth mec
 - **AUTH-2:** Handlers receive an authenticated `User` value from a Servant auth combinator; they never parse credentials themselves.
 - **AUTH-3:** Each paste records `created_by` (user identifier) for abuse investigation.
 - **AUTH-4:** Unauthenticated `POST /` returns 401 (or redirects to sign-in for browser requests).
+- **AUTH-5:** Browsers send Basic credentials with any request to the site,
+  including form posts triggered by other sites. `POST /` therefore rejects
+  a request whose `Origin` header differs from `BASE_URL` with 403. Requests
+  without an `Origin` header (e.g. curl) are allowed.
 
 ### 5.2 Seam in the Servant API
 
@@ -273,8 +280,9 @@ CREATE INDEX IF NOT EXISTS pastes_expires_at ON pastes(expires_at);
 - **NFR-2:** Response headers: `Content-Security-Policy: default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self'`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`.
 - **NFR-3:** Raw endpoint always served as `text/plain` so browsers never sniff it as HTML.
 - **NFR-4:** Request body size is enforced at the WAI layer before the full body is read. The cap is 3 × `MAX_PASTE_BYTES` + 4 KiB, which allows for worst-case URL-encoding growth. The handler then checks the decoded text against `MAX_PASTE_BYTES` (FR-5). Both rejections return 413.
-- **NFR-5:** Per-user rate limit on paste creation (e.g. 30/min). This is 
-  low priority given authentication and expected traffic.
+- **NFR-5:** Per-user rate limit on paste creation: 30 per minute, as a
+  sliding window held in memory (reset on restart). Excess requests get 429.
+  This is low priority given authentication and expected traffic.
 - **NFR-6:** Parameterized SQL queries only.
 - **NFR-7:** Deployed behind HTTPS (terminated at reverse proxy). This is required, since interim Basic auth sends credentials on every request.
 - **NFR-8:** Credentials and session tokens are stored only as hashes.
@@ -293,7 +301,7 @@ CREATE INDEX IF NOT EXISTS pastes_expires_at ON pastes(expires_at);
 | Method | Path | Auth | Success | Errors |
 |---|---|---|---|---|
 | GET | `/` | required | 200 HTML form | 401 / sign-in prompt |
-| POST | `/` | required | 303 → `/<id>` | 400 empty, 401, 413 too large |
+| POST | `/` | required | 303 → `/<id>` | 400 empty, 401, 403 cross-origin, 413 too large, 429 rate limited |
 | GET | `/:id` | none | 200 HTML | 400 malformed, 404 missing, expired, or taken down |
 | GET | `/:id/raw` | none | 200 text/plain | 400, 404 |
 | GET | `/static/copy.js` | none | 200 text/javascript | — |

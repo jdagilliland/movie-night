@@ -1,7 +1,9 @@
 -- | Server-rendered pages (SPEC §8). Lucid escapes all text, so user content
 -- is never interpreted as markup (NFR-1).
 module MovieNight.Html
-  ( pastePage
+  ( formPage
+  , signInPage
+  , pastePage
   , notFoundPage
   , formatTimestamp
   ) where
@@ -12,6 +14,24 @@ import Data.Time (UTCTime, defaultTimeLocale, formatTime)
 import Lucid
 import MovieNight.Paste (Paste (..))
 import MovieNight.PasteId (pasteIdText)
+import MovieNight.Users (Username, usernameText)
+
+-- | FR-1: the new-paste form, with an optional error message.
+formPage :: Username -> Maybe Text -> Html ()
+formPage user err =
+  page "New paste" $ do
+    form_ [method_ "post", action_ "/"] $ do
+      maybe mempty (p_ [role_ "alert"] . toHtml) err
+      textarea_ [name_ "content", rows_ "20", required_ "required", autofocus_] ""
+      p_ (button_ [type_ "submit"] "Create paste")
+    p_ ("Signed in as " <> toHtml (usernameText user) <> ".")
+
+-- | Shown when a visitor cancels the browser's sign-in dialog (SPEC §5.3).
+signInPage :: Html ()
+signInPage =
+  page "Sign in" $ do
+    p_ "Sign in to create a paste."
+    p_ "Viewing a paste doesn't need an account."
 
 -- | FR-13, FR-15, FR-18: the paste view page. Takes the base URL.
 pastePage :: Text -> Paste -> Html ()
@@ -67,4 +87,5 @@ stylesheet =
     , "body { font-family: ui-monospace, Menlo, Consolas, monospace;"
     , "       max-width: 50rem; margin: 2rem auto; padding: 0 1rem; line-height: 1.4; }"
     , "pre { white-space: pre-wrap; overflow-wrap: anywhere; }"
+    , "textarea { width: 100%; box-sizing: border-box; font: inherit; }"
     ]

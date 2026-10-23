@@ -1,22 +1,31 @@
 module MovieNight.ServerSpec (spec) where
 
-import Control.Monad (forM_)
+import Control.Monad (forM_, replicateM_)
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as BS
+import Data.ByteString.Base64 qualified as B64
 import Data.ByteString.Lazy qualified as BL
+import Data.Map.Strict qualified as Map
+import Data.Maybe (fromJust, fromMaybe)
+import Data.Text (Text)
+import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
 import Data.Time (UTCTime, addUTCTime, nominalDay)
-import Network.HTTP.Types (hContentType, statusCode)
-import Network.Wai (Application)
-import Network.Wai.Test (SResponse (..))
 import MovieNight.Paste
-import MovieNight.PasteId (pasteIdText)
+import MovieNight.PasteId (generatePasteId, pasteIdText)
+import MovieNight.RateLimit (newRateLimiter)
 import MovieNight.Server
 import MovieNight.Store
 import MovieNight.Store.Memory (newMemoryStore)
 import MovieNight.StoreContract (mkPaste, t0)
+import MovieNight.Users (hashPasswordWith, parseUsername)
+import MovieNight.UsersSpec (cheapParams)
+import Network.HTTP.Types (Header, hContentType, hLocation, statusCode)
+import Network.Wai (Application)
+import Network.Wai.Test (SResponse (..))
 import Test.Hspec
 import Test.Hspec.Wai
+import Web.FormUrlEncoded (urlEncodeAsForm)
 
 live, scripted, leadingNewline, takenDown :: Paste
 live = mkPaste "abcdEFGH" "hello\nworld"
@@ -24,19 +33,50 @@ scripted = mkPaste "scr1pted" "<script>alert(1)</script> & more"
 leadingNewline = mkPaste "newline1" "\nstarts with a newline"
 takenDown = mkPaste "removed1" "gone"
 
--- | An app over a memory store holding the fixture pastes, at the given time.
+-- | Small, so size limits are easy to test.
+maxPasteBytes :: Int
+maxPasteBytes = 64
+
+-- | Pastes per user per minute.
+rateLimit :: Int
+rateLimit = 3
+
+-- | An app over a memory store holding the fixture pastes, at the given time,
+-- with one user: alice, password "pw".
 mkApp :: UTCTime -> (Store -> Store) -> IO Application
 mkApp now modifyStore = do
   store <- newMemoryStore
   forM_ [live, scripted, leadingNewline, takenDown] (storeInsert store)
   _ <- storeTakedown store (pasteId takenDown) "spam" t0
+  aliceHash <- hashPasswordWith cheapParams "pw"
+  rateLimiter <- newRateLimiter rateLimit 60
   pure $
     app
       Env
         { envStore = modifyStore store
         , envBaseUrl = "https://movie.example"
         , envNow = pure now
+        , envGenerateId = generatePasteId
+        , envUsers = Map.singleton (fromJust (parseUsername "alice")) aliceHash
+        , envPasteTtl = 30 * nominalDay
+        , envMaxPasteBytes = maxPasteBytes
+        , envRateLimiter = rateLimiter
         }
+
+basicAuth :: ByteString -> ByteString -> Header
+basicAuth name password = ("Authorization", "Basic " <> B64.encode (name <> ":" <> password))
+
+alice :: Header
+alice = basicAuth "alice" "pw"
+
+-- | Submits the new-paste form.
+postPaste :: [Header] -> Text -> WaiSession st SResponse
+postPaste headers content =
+  request "POST" "/" ((hContentType, "application/x-www-form-urlencoded") : headers) $
+    urlEncodeAsForm [("content" :: Text, content)]
+
+location :: SResponse -> ByteString
+location = fromMaybe "" . lookup hLocation . simpleHeaders
 
 -- | One hour after the fixtures were created; nothing has expired.
 beforeExpiry :: UTCTime
@@ -177,3 +217,98 @@ spec = do
       it "return 404 from the expiry instant on" $ do
         get (path live) `shouldRespondWith` 404
         get (path live <> "/raw") `shouldRespondWith` 404
+
+  with (mkApp beforeExpiry id) $ do
+    describe "AUTH-4, FR-1: authentication" $ do
+      it "challenges an anonymous visitor to / with a sign-in prompt" $ do
+        r <- get "/"
+        liftIO $ do
+          status r `shouldBe` 401
+          lookup "WWW-Authenticate" (simpleHeaders r)
+            `shouldBe` Just "Basic realm=\"Movie Night\", charset=\"UTF-8\""
+          body r `shouldContainBytes` "Sign in to create a paste."
+
+      it "rejects a wrong password, an unknown user, and malformed credentials" $
+        forM_
+          [ basicAuth "alice" "wrong"
+          , basicAuth "mallory" "pw"
+          , ("Authorization", "Basic !!!not base64!!!")
+          , ("Authorization", "Basic " <> B64.encode "no-colon")
+          , ("Authorization", "Bearer " <> B64.encode "alice:pw")
+          ]
+          $ \h -> request "GET" "/" [h] "" `shouldRespondWith` 401
+
+      it "shows the form to a signed-in user" $ do
+        r <- request "GET" "/" [alice] ""
+        liftIO $ do
+          status r `shouldBe` 200
+          body r `shouldContainBytes` "<form method=\"post\" action=\"/\">"
+          body r `shouldContainBytes` "<textarea name=\"content\""
+          body r `shouldContainBytes` "Signed in as alice."
+
+      it "accepts a lowercase auth scheme" $
+        request "GET" "/" [("Authorization", "basic " <> B64.encode "alice:pw")] ""
+          `shouldRespondWith` 200
+
+      it "requires credentials to create a paste" $
+        postPaste [] "hello" `shouldRespondWith` 401
+
+    describe "FR-2, FR-3: POST /" $ do
+      it "creates the paste and redirects to its view page" $ do
+        r <- postPaste [alice] "hello"
+        liftIO $ do
+          status r `shouldBe` 303
+          location r `shouldSatisfy` \l -> BS.length l == 9 && "/" `BS.isPrefixOf` l
+        get (location r) `shouldRespondWith` 200
+        raw <- get (location r <> "/raw")
+        liftIO $ body raw `shouldBe` "hello"
+
+      it "FR-6: stores the text with normalized line endings" $ do
+        r <- postPaste [alice] "a\r\nb"
+        raw <- get (location r <> "/raw")
+        liftIO $ body raw `shouldBe` "a\nb"
+
+      it "FR-4: rejects an empty paste, showing the form again" $ do
+        r <- postPaste [alice] "  \r\n "
+        liftIO $ do
+          status r `shouldBe` 400
+          body r `shouldContainBytes` "The paste is empty."
+          body r `shouldContainBytes` "<textarea"
+
+      it "rejects a form without a content field" $
+        request "POST" "/" [alice, (hContentType, "application/x-www-form-urlencoded")] "other=x"
+          `shouldRespondWith` 400
+
+    describe "FR-5, NFR-4: size limits" $ do
+      it "accepts text of exactly the limit" $
+        postPaste [alice] (T.replicate maxPasteBytes "a") `shouldRespondWith` 303
+
+      it "accepts text of the limit even when URL-encoding triples it" $
+        -- Each "&" is sent as "%26".
+        postPaste [alice] (T.replicate maxPasteBytes "&") `shouldRespondWith` 303
+
+      it "rejects text one byte over the limit with 413, showing the form again" $ do
+        r <- postPaste [alice] (T.replicate (maxPasteBytes + 1) "a")
+        liftIO $ do
+          status r `shouldBe` 413
+          body r `shouldContainBytes` "<textarea"
+
+      it "rejects a request body over 3 × the limit + 4 KiB" $
+        request "POST" "/" [alice, (hContentType, "application/x-www-form-urlencoded")]
+          (BL.fromStrict ("content=" <> BS.replicate (3 * maxPasteBytes + 4096) 0x61))
+          `shouldRespondWith` 413
+
+    describe "cross-origin protection" $ do
+      it "accepts a post from the app's own origin" $
+        postPaste [alice, ("Origin", "https://movie.example")] "hello" `shouldRespondWith` 303
+
+      it "rejects a post from another origin" $
+        postPaste [alice, ("Origin", "https://evil.example")] "hello" `shouldRespondWith` 403
+
+    describe "NFR-5: rate limiting" $
+      it "refuses a user's pastes beyond the limit with 429" $ do
+        replicateM_ rateLimit (postPaste [alice] "hello" `shouldRespondWith` 303)
+        r <- postPaste [alice] "hello"
+        liftIO $ do
+          status r `shouldBe` 429
+          body r `shouldContainBytes` "Too many new pastes."

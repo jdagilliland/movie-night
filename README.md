@@ -15,8 +15,13 @@ it is missing.
 
 ```
 stack build                 # build library, executable, and tests
-stack exec movie-night -- serve     # run the web server on port 8080
+stack exec movie-night -- add-user alice  # create a user; prompts for a password
+stack exec movie-night -- serve           # run the web server on port 8080
 ```
+
+The server refuses to start without a users file, so create a user first.
+`set-password` and `remove-user` manage existing users; restart the server
+after any change.
 
 The server is configured with environment variables (see `docs/SPEC.md`
 §7.4). By default it stores data in `./data/pastes.db`, which is

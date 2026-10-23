@@ -17,6 +17,10 @@ import Data.Text qualified as T
 import Data.Word (Word8)
 import Web.HttpApiData (FromHttpApiData (..), ToHttpApiData (..))
 
+-- | Only 'parsePasteId' and 'generatePasteId' make these. The accessor is a
+-- separate function, not a record field: record update syntax needs only the
+-- field in scope, so an exported field would let any module build an invalid
+-- 'PasteId'.
 newtype PasteId = PasteId Text
   deriving stock (Eq, Ord, Show)
 

@@ -16,6 +16,9 @@ data Config = Config
   , cfgDbPath :: FilePath
   , cfgBaseUrl :: Text
   -- ^ Without a trailing slash.
+  , cfgMaxPasteBytes :: Int
+  , cfgPasteTtlDays :: Int
+  , cfgAuthUsersFile :: FilePath
   }
   deriving stock (Eq, Show)
 
@@ -23,19 +26,27 @@ data Config = Config
 -- variables.
 parseConfig :: (String -> Maybe String) -> Either String Config
 parseConfig lookupVar = do
-  port <- case lookupVar "PORT" of
-    Nothing -> Right 8080
-    Just s -> case readMaybe s of
-      Just p | p >= 1 && p <= 65535 -> Right p
-      _ -> Left ("PORT must be a number from 1 to 65535, got: " <> show s)
+  port <- intVar "PORT" 8080 1 65535
+  maxPasteBytes <- intVar "MAX_PASTE_BYTES" 524288 1 maxBound
+  ttlDays <- intVar "PASTE_TTL_DAYS" 30 1 maxBound
   pure
     Config
       { cfgPort = port
       , cfgDbPath = withDefault "DB_PATH" "./data/pastes.db"
       , cfgBaseUrl = T.dropWhileEnd (== '/') (T.pack (withDefault "BASE_URL" "http://localhost:8080"))
+      , cfgMaxPasteBytes = maxPasteBytes
+      , cfgPasteTtlDays = ttlDays
+      , cfgAuthUsersFile = withDefault "AUTH_USERS_FILE" "./data/users"
       }
   where
     withDefault name def = fromMaybe def (lookupVar name)
+
+    intVar :: String -> Int -> Int -> Int -> Either String Int
+    intVar name def lo hi = case lookupVar name of
+      Nothing -> Right def
+      Just s -> case readMaybe s of
+        Just n | n >= lo && n <= hi -> Right n
+        _ -> Left (name <> " must be a number from " <> show lo <> " to " <> show hi <> ", got: " <> show s)
 
 loadConfig :: IO (Either String Config)
 loadConfig = do
