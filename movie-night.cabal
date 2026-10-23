@@ -4,7 +4,7 @@ version:            0.1.0.0
 synopsis:           Paste text, get a short link
 build-type:         Simple
 extra-doc-files:    docs/SPEC.md
-extra-source-files: static/copy.js
+extra-source-files: static/paste.js
 
 common shared
   default-language: GHC2021
@@ -91,6 +91,7 @@ test-suite spec
     MovieNight.ConfigSpec
     MovieNight.ContentSpec
     MovieNight.CreateSpec
+    MovieNight.HtmlSpec
     MovieNight.PasteIdSpec
     MovieNight.PurgeSpec
     MovieNight.RateLimitSpec

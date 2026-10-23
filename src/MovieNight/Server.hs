@@ -71,7 +71,7 @@ instance FromForm PasteForm where
 -- | Fixed paths come before the captures (SPEC §10, route ordering).
 type API =
        "healthz" :> Get '[PlainText] Text
-  :<|> "static" :> "copy.js" :> Get '[JavaScript] ByteString
+  :<|> "static" :> "paste.js" :> Get '[JavaScript] ByteString
   :<|> AuthProtect "session" :> Get '[HTML] (Html ())
   :<|> AuthProtect "session"
          :> Header "Origin" Text
@@ -88,8 +88,8 @@ instance Accept JavaScript where
 instance MimeRender JavaScript ByteString where
   mimeRender _ = BL.fromStrict
 
-copyJs :: ByteString
-copyJs = $(embedFile "static/copy.js")
+pasteJs :: ByteString
+pasteJs = $(embedFile "static/paste.js")
 
 app :: Env -> Application
 app env =
@@ -102,7 +102,7 @@ app env =
 server :: Env -> Server API
 server env =
   healthz
-    :<|> pure copyJs
+    :<|> pure pasteJs
     :<|> (\user -> pure (formPage (userName user) Nothing))
     :<|> createHandler
     :<|> viewPaste

@@ -285,15 +285,35 @@ CREATE INDEX IF NOT EXISTS pastes_expires_at ON pastes(expires_at);
 ## 8. Presentation
 
 - Server-rendered HTML.
-- The view page has a "copy link" control, implemented with a small script served as a static file (`/static/copy.js`). The link text stays selectable without it.
+- The view page has a small script served as a static file
+  (`/static/paste.js`). It powers the "copy link" control, and sets the tab
+  title of a marquee paste (below). Without it, the link text stays
+  selectable and the tab is just "Movie Night".
 - Single small inline stylesheet: system monospace font, `white-space: pre-wrap` for wrapping long lines, comfortable max-width, no colors beyond defaults.
 - Responsive and readable on mobile; respects light/dark mode via `prefers-color-scheme`.
-- On the view page, the paste content is the most prominent feature: full
-  size, monospace, about 80 characters wide. Everything else is slim
-  chrome in small, faded, sans-serif text: a header above the content (the
-  link, "copy link", "raw", "new paste") and a footer below it (creation
-  and expiry timestamps). The fading uses opacity, not a color, so it
-  follows light and dark mode.
+- On the view page, the paste content is the most prominent feature. A
+  paste is almost always a movie title, so a short one is shown as a
+  marquee: a huge, heavy, centered headline (the page's only `<h1>`),
+  between double rules in the text color, filling most of the screen. It
+  applies to a single line of at most 100 characters, ignoring surrounding
+  whitespace, which isn't shown; up to 30 characters is the bigger size.
+  The title is shown as typed, not uppercased, and the raw view keeps the
+  exact content. Anything longer or multi-line is full-size monospace text,
+  about 80 characters wide.
+- Page titles start with the app name, e.g. "Movie Night · New paste".
+  Browsers truncate tab titles from the right, so a crowded tab still shows
+  it's for movie night while the film itself stays hidden. Other pastes are
+  "Movie Night · Paste <id>".
+- Link previews must never spoil a paste. Everything the server sends in
+  the page's `<head>` is neutral: a marquee paste's title is just "Movie
+  Night", and every page has `og:title` "Movie Night" and a generic
+  `og:description` and `description`, which previews prefer to the page's
+  text. Only in the browser does `paste.js` set the tab title to "Movie
+  Night · The Grand Budapest Hotel"; previews don't run scripts.
+- Everything else is slim chrome in small, faded, sans-serif text: a header
+  above the content (the link, "copy link", "raw", "new paste") and a
+  footer below it (creation and expiry timestamps). The fading uses
+  opacity, not a color, so it follows light and dark mode.
 
 ## 9. Non-Functional Requirements
 
@@ -341,7 +361,7 @@ CREATE INDEX IF NOT EXISTS pastes_expires_at ON pastes(expires_at);
 | POST | `/` | required | 303 → `/<id>` | 400 empty, 401, 403 cross-origin, 413 too large, 429 rate limited |
 | GET | `/:id` | none | 200 HTML | 400 malformed, 404 missing, expired, or taken down |
 | GET | `/:id/raw` | none | 200 text/plain | 400, 404 |
-| GET | `/static/copy.js` | none | 200 text/javascript | — |
+| GET | `/static/paste.js` | none | 200 text/javascript | — |
 | GET | `/healthz` | none | 200 | 503 if DB unreachable |
 
 Route ordering: fixed paths (`/healthz`, `/static/*`, future `/auth/*`) must be matched before `Capture "pasteId"`. `PasteId` parsing (8-char base62) also prevents them from colliding.
@@ -354,7 +374,7 @@ Route ordering: fixed paths (`/healthz`, `/static/*`, future `/auth/*`) must be 
   - Form flow with valid credentials; `POST /` without/with bad credentials → 401.
   - View routes succeed with no credentials.
   - 404 (unknown), 404 (expired: insert with past `expires_at`), 404 (taken down), 400, 413.
-  - View page includes the expiry notice and the copy control; `/static/copy.js` is served.
+  - View page includes the expiry notice and the copy control; `/static/paste.js` is served.
   - HTML escaping (`<script>` renders literally); security headers present (including CSP `script-src`).
 - **Size limits:** decoded text at exactly `MAX_PASTE_BYTES` is accepted even when its encoded body is larger; one byte over → 413; an oversized raw body → 413.
 - **Users file:** parsing accepts comments and blank lines and rejects malformed lines; the server refuses to start on a world-readable file; `add-user` / `set-password` / `remove-user` round-trip.

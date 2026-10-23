@@ -27,10 +27,12 @@ import Test.Hspec
 import Test.Hspec.Wai
 import Web.FormUrlEncoded (urlEncodeAsForm)
 
-live, scripted, leadingNewline, takenDown :: Paste
+live, scripted, leadingNewline, title, takenDown :: Paste
 live = mkPaste "abcdEFGH" "hello\nworld"
 scripted = mkPaste "scr1pted" "<script>alert(1)</script> & more"
-leadingNewline = mkPaste "newline1" "\nstarts with a newline"
+-- Two lines, so it is shown as monospace text, not a marquee.
+leadingNewline = mkPaste "newline1" "\nstarts with a newline\nand continues"
+title = mkPaste "title001" "  The Grand Budapest Hotel \n"
 takenDown = mkPaste "removed1" "gone"
 
 -- | Small, so size limits are easy to test.
@@ -45,8 +47,8 @@ rateLimit = 3
 -- with one user: alice, password "pw".
 mkApp :: UTCTime -> (Store -> Store) -> IO Application
 mkApp now modifyStore = do
-  store <- newMemoryStore
-  forM_ [live, scripted, leadingNewline, takenDown] (storeInsert store)
+  store <- newMemoryStore forM_ [live, scripted, leadingNewline, title,
+  takenDown] (storeInsert store)
   _ <- storeTakedown store (pasteId takenDown) "spam" t0
   aliceHash <- hashPasswordWith cheapParams "pw"
   rateLimiter <- newRateLimiter rateLimit 60
@@ -94,6 +96,10 @@ contentType = lookup hContentType . simpleHeaders
 body :: SResponse -> ByteString
 body = BL.toStrict . simpleBody
 
+-- | UTF-8 bytes of a literal. A ByteString literal can't hold "·".
+utf8 :: Text -> ByteString
+utf8 = TE.encodeUtf8
+
 contains :: ByteString -> ByteString -> Bool
 contains haystack needle = needle `BS.isInfixOf` haystack
 
@@ -120,7 +126,41 @@ spec = do
 
       it "preserves a leading newline" $ do
         r <- get (path leadingNewline)
-        liftIO $ body r `shouldContainBytes` "<pre>\n\nstarts with a newline</pre>"
+        liftIO $ body r `shouldContainBytes` "<pre>\n\nstarts with a newline\nand continues</pre>"
+
+    describe "§8: a short single-line paste is a marquee" $ do
+      it "shows it as the page's only heading, trimmed, and not as monospace text" $ do
+        r <- get (path title)
+        let count needle = length (filter (BS.isPrefixOf needle) (BS.tails (body r)))
+        liftIO $ do
+          body r `shouldContainBytes` "<main class=\"marquee\"><h1 class=\"big\">The Grand Budapest Hotel</h1></main>"
+          count "<h1" `shouldBe` 1
+          body r `shouldNotSatisfy` (`contains` "<pre>")
+
+      -- Previews read the <head> (title, og: and description tags); the tab
+      -- title is set by paste.js, which previews don't run.
+      it "keeps the title out of everything a link preview reads" $ do
+        r <- get (path title)
+        let headSection = fst (BS.breakSubstring "<body>" (body r))
+        liftIO $ do
+          headSection `shouldContainBytes` "<title>Movie Night</title>"
+          headSection `shouldContainBytes` "<meta property=\"og:title\" content=\"Movie Night\">"
+          headSection `shouldContainBytes` "<meta property=\"og:description\""
+          headSection `shouldNotSatisfy` (`contains` "Budapest")
+
+      it "keeps the content exact in the raw view" $ do
+        r <- get (path title <> "/raw")
+        liftIO $ body r `shouldBe` TE.encodeUtf8 (pasteContent title)
+
+      it "NFR-1: still escapes markup" $ do
+        r <- get (path scripted)
+        liftIO $ body r `shouldContainBytes` "<h1 class=\"medium\">&lt;script&gt;"
+
+      it "shows multi-line content as monospace text, without a heading" $ do
+        r <- get (path live)
+        liftIO $ do
+          body r `shouldNotSatisfy` (`contains` "<h1")
+          body r `shouldContainBytes` utf8 "<title>Movie Night · Paste abcdEFGH</title>"
 
     describe "FR-15, FR-18: view page contents" $ do
       it "links to the full short URL, with a copy control and its script" $ do
@@ -128,7 +168,7 @@ spec = do
         liftIO $ do
           body r `shouldContainBytes` "href=\"https://movie.example/abcdEFGH\""
           body r `shouldContainBytes` "id=\"copy-link\""
-          body r `shouldContainBytes` "src=\"/static/copy.js\""
+          body r `shouldContainBytes` "src=\"/static/paste.js\""
 
       it "shows creation and expiry times in UTC" $ do
         r <- get (path live)
@@ -169,6 +209,7 @@ spec = do
         liftIO $ do
           status r `shouldBe` 404
           body r `shouldContainBytes` "Paste not found."
+          body r `shouldContainBytes` utf8 "<title>Movie Night · Not found</title>"
 
       it "returns the identical response for a taken-down paste" $ do
         unknown <- get "/zzzzzzzz"
@@ -194,16 +235,17 @@ spec = do
         get "/short/raw" `shouldRespondWith` 400
         get "/has-dash" `shouldRespondWith` 400
 
-    describe "§8: GET /static/copy.js" $
-      it "serves the copy script as JavaScript" $ do
-        r <- get "/static/copy.js"
+    describe "§8: GET /static/paste.js" $
+      it "serves the page script as JavaScript, with copy and tab-title behaviour" $ do
+        r <- get "/static/paste.js"
         liftIO $ do
           status r `shouldBe` 200
           contentType r `shouldBe` Just "text/javascript;charset=utf-8"
           body r `shouldContainBytes` "navigator.clipboard"
+          body r `shouldContainBytes` utf8 "document.title = \"Movie Night · \""
 
     describe "NFR-2: security headers" $
-      forM_ ["/abcdEFGH", "/abcdEFGH/raw", "/zzzzzzzz", "/short", "/static/copy.js", "/healthz"] $ \p ->
+      forM_ ["/abcdEFGH", "/abcdEFGH/raw", "/zzzzzzzz", "/short", "/static/paste.js", "/healthz"] $ \p ->
         it ("are set on " <> show p) $ do
           r <- get p
           liftIO $ do
