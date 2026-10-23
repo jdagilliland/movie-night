@@ -75,14 +75,18 @@ resource "aws_vpc_security_group_ingress_rule" "http3" {
 }
 
 resource "aws_vpc_security_group_ingress_rule" "ssh" {
-  for_each = toset(var.admin_cidrs)
+  # One rule per admin CIDR and SSH port, keyed "CIDR port".
+  for_each = {
+    for pair in setproduct(var.admin_cidrs, var.ssh_ports) :
+    "${pair[0]} ${pair[1]}" => { cidr = pair[0], port = pair[1] }
+  }
 
   security_group_id = aws_security_group.app.id
   description       = "SSH from an admin"
-  cidr_ipv4         = each.value
+  cidr_ipv4         = each.value.cidr
   ip_protocol       = "tcp"
-  from_port         = 22
-  to_port           = 22
+  from_port         = each.value.port
+  to_port           = each.value.port
 }
 
 resource "aws_vpc_security_group_egress_rule" "all" {

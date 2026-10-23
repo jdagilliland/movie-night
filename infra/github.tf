@@ -6,6 +6,17 @@ resource "aws_iam_openid_connect_provider" "github" {
   client_id_list = ["sts.amazonaws.com"]
 }
 
+locals {
+  github_owner = split("/", var.github_repository)[0]
+  github_name  = split("/", var.github_repository)[1]
+
+  # GitHub identifies the repository by name and immutable ID, e.g.
+  # repo:OWNER@OWNER_ID/NAME@REPO_ID:ref:refs/heads/main. The IDs mean a
+  # different repository that later takes the same name can't assume the
+  # role.
+  github_main_subject = "repo:${local.github_owner}@${var.github_owner_id}/${local.github_name}@${var.github_repository_id}:ref:refs/heads/main"
+}
+
 resource "aws_iam_role" "github_actions" {
   name = "movie-night-github-actions"
 
@@ -19,7 +30,7 @@ resource "aws_iam_role" "github_actions" {
       Condition = {
         StringEquals = {
           "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
-          "token.actions.githubusercontent.com:sub" = "repo:${var.github_repository}:ref:refs/heads/main"
+          "token.actions.githubusercontent.com:sub" = local.github_main_subject
         }
       }
     }]

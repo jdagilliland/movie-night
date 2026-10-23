@@ -32,6 +32,19 @@ variable "github_repository" {
   default     = "jdagilliland/movie-night"
 }
 
+# GitHub's OIDC subject includes these immutable IDs alongside the names
+# (see github.tf). Look them up with:
+#   gh api repos/OWNER/NAME --jq '.owner.id, .id'
+variable "github_owner_id" {
+  type    = number
+  default = 1383440
+}
+
+variable "github_repository_id" {
+  type    = number
+  default = 1428018715
+}
+
 variable "ssh_public_key" {
   description = "Public key for SSH access as the ubuntu user (the contents, not a path)."
   type        = string
@@ -40,6 +53,12 @@ variable "ssh_public_key" {
 variable "admin_cidrs" {
   description = "CIDRs allowed to SSH in, e.g. [\"203.0.113.7/32\"]."
   type        = list(string)
+}
+
+variable "ssh_ports" {
+  description = "Ports the SSH server listens on. 2022 is for networks (e.g. behind Zscaler) that only allow outbound SSH on that port."
+  type        = list(number)
+  default     = [22, 2022]
 }
 
 variable "alert_email" {

@@ -68,6 +68,7 @@ resource "aws_instance" "app" {
     image          = "${aws_ecr_repository.app.repository_url}:latest"
     domain         = var.domain
     paste_ttl_days = var.paste_ttl_days
+    ssh_ports      = var.ssh_ports
     compose_b64    = filebase64("${path.module}/../deploy/compose.yaml")
     caddyfile_b64  = filebase64("${path.module}/../deploy/Caddyfile")
     unit_b64       = filebase64("${path.module}/../deploy/movie-night.service")

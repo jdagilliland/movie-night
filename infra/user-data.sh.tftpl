@@ -3,6 +3,18 @@
 # OpenTofu (infra/instance.tf). Output: /var/log/cloud-init-output.log
 set -euxo pipefail
 
+# --- SSH ports -----------------------------------------------------------
+# First, so the instance is reachable even if a later step fails. Ubuntu
+# 24.04 starts sshd through ssh.socket, whose ports are generated from the
+# Port lines in sshd_config on daemon-reload.
+cat > /etc/ssh/sshd_config.d/10-movie-night-ports.conf <<'EOF'
+%{ for port in ssh_ports ~}
+Port ${port}
+%{ endfor ~}
+EOF
+systemctl daemon-reload
+systemctl restart ssh.socket || systemctl restart ssh
+
 # --- Swap: a t4g.nano has 0.5 GB of memory --------------------------------
 if [ ! -f /swapfile ]; then
   fallocate -l 1G /swapfile
