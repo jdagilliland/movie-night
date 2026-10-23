@@ -14,6 +14,12 @@ variable "domain" {
   type        = string
 }
 
+variable "route53_zone_name" {
+  description = "A Route 53 hosted zone in this account (e.g. example.com) in which to manage the A record for domain. Leave null to manage DNS elsewhere."
+  type        = string
+  default     = null
+}
+
 variable "github_repository" {
   description = "owner/name of the GitHub repository allowed to push images."
   type        = string

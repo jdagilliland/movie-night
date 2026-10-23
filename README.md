@@ -99,6 +99,13 @@ from its own local CA, so the browser warns about it. `deploy/.env` and
 The AWS infrastructure is defined with OpenTofu in `infra/`. Run these with
 AWS credentials for the target account in your shell (e.g. `AWS_PROFILE`).
 
+First, get a domain. Registering one in the Route 53 console (Registered
+domains → Register domains) also creates its hosted zone, and OpenTofu then
+manages the DNS record: set `route53_zone_name` in `terraform.tfvars` to the
+registered domain. A domain from any other registrar works too; leave
+`route53_zone_name` out and create the DNS record yourself (step 4).
+OpenTofu never registers, renews, or deletes the domain itself.
+
 1. Once, create the bucket that holds the state:
 
    ```
@@ -122,7 +129,8 @@ AWS credentials for the target account in your shell (e.g. `AWS_PROFILE`).
    tofu apply
    ```
 
-4. Point the domain's DNS A record at the `public_ip` output.
+4. Without `route53_zone_name`, point the domain's DNS A record at the
+   `public_ip` output. With it, `tofu apply` has already created the record.
 5. In the GitHub repository, set the Actions variable `AWS_ROLE_ARN` to the
    `github_actions_role_arn` output (Settings → Secrets and variables →
    Actions → Variables). The next push to `main` builds the image and

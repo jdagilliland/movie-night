@@ -1,6 +1,14 @@
 output "public_ip" {
-  description = "Point the domain's DNS A record here."
+  description = "Without route53_zone_name, point the domain's DNS A record here."
   value       = aws_eip.app.public_ip
+}
+
+output "dns" {
+  value = (
+    var.route53_zone_name == null
+    ? "Not managed here: point ${var.domain} at ${aws_eip.app.public_ip}"
+    : "Managed in Route 53 zone ${var.route53_zone_name}"
+  )
 }
 
 output "ssh_command" {

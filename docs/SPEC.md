@@ -407,8 +407,14 @@ Route ordering: fixed paths (`/healthz`, `/static/*`, future `/auth/*`) must be 
   - Networking: an Elastic IP, so the DNS record stays stable across instance
     replacement. AWS bills public IPv4 addresses hourly outside the free tier, which is
     expected to be the main fixed cost.
-  - DNS: the domain is managed outside AWS. An A record points at the Elastic IP,
-    so OpenTofu doesn't manage DNS.
+  - DNS: an A record for the domain points at the Elastic IP. For now the
+    domain is registered by hand in Route 53, and OpenTofu manages the A
+    record in its hosted zone (`route53_zone_name`). The domain isn't tied
+    to Route 53: with `route53_zone_name` unset, OpenTofu manages no DNS,
+    and the A record is created wherever the domain's DNS is hosted. The
+    registration itself is never managed by OpenTofu, so no apply or
+    destroy can affect it. Registration and the hosted zone ($0.50/month)
+    add to the monthly cost.
   - HTTPS (NFR-7): TLS terminates on the instance (e.g. Caddy with Let's Encrypt).
     No load balancer, since an ALB alone would exceed the target cost.
   - Images: built Docker images are pushed to ECR and pulled by the instance.
