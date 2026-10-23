@@ -16,3 +16,14 @@ Hard-wrap Markdown prose at around 76 characters. Only re-wrap lines whose
 content you are changing; leave the wrapping of untouched lines alone, even
 if they are longer or shorter than 76 characters, to keep git diffs free of
 wrapping noise. Tables, code blocks, and URLs are exempt from wrapping.
+
+## Line length in all files
+
+The user's editor hard-wraps every file at 76 columns, code included. It
+usually wraps code safely, but it once joined two Haskell statements into
+a broken line. So:
+
+- Keep lines you write or change within 76 columns in every file, so the
+  editor has nothing to reflow. Leave untouched long lines alone.
+- After the user has edited a file, build and test before relying on it,
+  and suspect reflowed lines first if code that worked stops compiling.
