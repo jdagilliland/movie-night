@@ -45,9 +45,11 @@ resource "aws_security_group" "app" {
   vpc_id      = aws_vpc.main.id
 }
 
+# Rule descriptions may not contain apostrophes (EC2 rejects them at apply
+# time; validate doesn't catch it).
 resource "aws_vpc_security_group_ingress_rule" "http" {
   security_group_id = aws_security_group.app.id
-  description       = "HTTP (Caddy redirects to HTTPS; Let's Encrypt challenges)"
+  description       = "HTTP (Caddy redirects to HTTPS; Lets Encrypt challenges)"
   cidr_ipv4         = "0.0.0.0/0"
   ip_protocol       = "tcp"
   from_port         = 80
@@ -85,7 +87,7 @@ resource "aws_vpc_security_group_ingress_rule" "ssh" {
 
 resource "aws_vpc_security_group_egress_rule" "all" {
   security_group_id = aws_security_group.app.id
-  description       = "All outbound (packages, ECR, Let's Encrypt)"
+  description       = "All outbound (packages, ECR, Lets Encrypt)"
   cidr_ipv4         = "0.0.0.0/0"
   ip_protocol       = "-1"
 }
