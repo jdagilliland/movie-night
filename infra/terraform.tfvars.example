@@ -11,8 +11,12 @@ ssh_public_key = "ssh-ed25519 AAAA... you@example.com"
 # hosted) in Route 53. Omit to manage DNS elsewhere.
 route53_zone_name = "example.com"
 
-admin_cidrs    = ["203.0.113.7/32"]
-alert_email    = "you@example.com"
+alert_email = "you@example.com"
+
+# Addresses allowed to SSH in directly. Usually empty: a shell via Session
+# Manager, and SSH tunneled through it, need no inbound rules. Add a /32 for
+# a network where direct SSH gets through, e.g. ["203.0.113.7/32"].
+admin_cidrs = []
 
 # Defaults, shown for reference:
 # instance_type       = "t4g.nano"

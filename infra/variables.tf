@@ -51,8 +51,9 @@ variable "ssh_public_key" {
 }
 
 variable "admin_cidrs" {
-  description = "CIDRs allowed to SSH in, e.g. [\"203.0.113.7/32\"]."
+  description = "CIDRs allowed to SSH in directly, e.g. [\"203.0.113.7/32\"]. Empty by default: Session Manager (and SSH through it) needs no inbound rules."
   type        = list(string)
+  default     = []
 }
 
 variable "ssh_ports" {

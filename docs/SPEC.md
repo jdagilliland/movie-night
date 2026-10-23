@@ -435,8 +435,15 @@ Route ordering: fixed paths (`/healthz`, `/static/*`, future `/auth/*`) must be 
   - The state bucket is created once by a separate configuration with local
     state (`infra/bootstrap`); the main configuration is in `infra/`.
   - Region: `us-east-1`.
-  - Admin access: SSH with a key pair. The security group allows port 22 only
-    from admin-specified CIDRs (an OpenTofu variable).
+  - Admin access: AWS Systems Manager Session Manager is the primary route
+    to a shell. It runs over HTTPS to AWS, so it works from networks that
+    block outbound SSH (the admin's network, behind Zscaler, does), and it
+    needs no inbound port; the instance role has
+    `AmazonSSMManagedInstanceCore`. `ssh` and `scp` work by tunneling SSH
+    through Session Manager with the admin's key pair. Direct SSH is closed
+    by default: the SSH server listens on ports 22 and 2022 (`ssh_ports`),
+    but the security group opens them only to the CIDRs in `admin_cidrs`,
+    which is empty unless a network where direct SSH gets through is added.
   - Architecture: ARM64 only (Graviton, e.g. t4g). Images are built on GitHub
     Actions native ARM runners (`ubuntu-24.04-arm`), not under QEMU
     emulation. The test job caches the Stack store, and the image job caches

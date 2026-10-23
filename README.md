@@ -142,10 +142,11 @@ OpenTofu never registers, renews, or deletes the domain itself.
 On first boot the instance sets itself up: Docker and Compose, the ECR
 credential helper, a swap file, the data volume mounted at
 `/var/lib/movie-night`, the files from `deploy/` in `/opt/movie-night`, and
-the systemd unit, enabled but not started. Once an image is in ECR, SSH in
-(the `ssh_command` output) and start the stack:
+the systemd unit, enabled but not started. Once an image is in ECR, open a
+shell on the instance (see "Getting a shell" below) and start the stack:
 
 ```
+sudo -iu ubuntu             # Session Manager starts you as ssm-user
 cloud-init status --wait    # until first-boot setup has finished
 cd /opt/movie-night
 docker compose pull
@@ -158,9 +159,35 @@ which only works once DNS points at the instance.
 
 To rebuild the instance from scratch, run `tofu apply
 -replace=aws_instance.app`. The data volume, including users and pastes, is
-kept and reattached; SSH in and `sudo systemctl start movie-night`.
+kept and reattached; open a shell and `sudo systemctl start movie-night`.
+The instance ID changes, so update `HostName` in `~/.ssh/config` from the
+`ssh_config` output.
+
+### Getting a shell
+
+Use AWS Systems Manager Session Manager. It runs over HTTPS to AWS, so it
+works from networks that block outbound SSH (e.g. behind Zscaler), and the
+instance needs no open SSH port. Install the plugin once:
+
+```
+brew install --cask session-manager-plugin
+```
+
+Then, from `infra/`:
+
+```
+$(tofu output -raw session_command)
+```
+
+For `ssh` and `scp`, add the `ssh_config` output to `~/.ssh/config`; then
+`ssh movie-night` tunnels SSH through Session Manager using your key.
+
+Direct SSH, on ports 22 and 2022, is closed unless `admin_cidrs` lists your
+address. Add a `/32` there only for a network where direct SSH gets through.
 
 ### Deploying a new version
+
+In a shell on the instance, as `ubuntu`:
 
 ```
 cd /opt/movie-night
@@ -172,7 +199,8 @@ This recreates only the app container; Caddy keeps running.
 
 ### Administration
 
-Admin commands run inside the app container:
+Admin commands run inside the app container, from a shell on the instance
+as `ubuntu`, in `/opt/movie-night`:
 
 ```
 docker compose exec app movie-night takedown <id> --reason "<text>"
