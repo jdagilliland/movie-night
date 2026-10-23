@@ -7,6 +7,13 @@
 # image's compiler instead of downloading its own.
 FROM haskell:9.10.3-slim-bookworm AS build
 
+# Extra CA certificates (*.crt) from docker/extra-ca-certs/, for building
+# behind a TLS-intercepting proxy, where Stack's downloads from Hackage
+# would otherwise fail. Only this build stage trusts them; the runtime image
+# below starts fresh. Without any certificates this step changes nothing.
+COPY docker/extra-ca-certs/ /usr/local/share/ca-certificates/extra/
+RUN update-ca-certificates
+
 WORKDIR /src
 
 # Dependencies first, so this layer is reused until the dependency set

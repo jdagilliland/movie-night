@@ -75,6 +75,11 @@ docker build -t movie-night:local .
 The image is built for the host's architecture: `linux/arm64` on Apple
 Silicon, matching the Graviton instance. The app runs as UID 10001.
 
+Behind a TLS-intercepting proxy, put the proxy's CA certificates (PEM,
+`*.crt`) in `docker/extra-ca-certs/` so the build can download packages.
+Only the build stage trusts them; the final image doesn't contain them.
+The directory's contents are git-ignored.
+
 ### Trying the stack locally
 
 ```

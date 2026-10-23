@@ -3,3 +3,5 @@ dist-newstyle/
 /data/
 /deploy/.env
 /deploy/data/
+/docker/extra-ca-certs/*
+!/docker/extra-ca-certs/.gitkeep
