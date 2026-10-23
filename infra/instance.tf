@@ -81,6 +81,14 @@ resource "aws_instance" "app" {
     ignore_changes = [ami, user_data]
   }
 
+  # First-boot setup downloads packages immediately, so the instance must
+  # not start before it has a route to the internet and outbound access.
+  # (OpenTofu removes a new security group's default allow-all egress rule.)
+  depends_on = [
+    aws_route_table_association.public,
+    aws_vpc_security_group_egress_rule.all,
+  ]
+
   tags = { Name = "movie-night" }
 }
 
