@@ -80,23 +80,23 @@ main = do
         putStrLn ("Purged " <> show purged <> " expired paste(s).")
     AddUser name -> do
       user <- username name
-      exists <- doesFileExist (cfgAuthUsersFile cfg)
+      exists <- doesFileExist (cfgUsersFile cfg)
       when exists $ do
-        users <- loadUsersFile (cfgAuthUsersFile cfg) >>= orDie
+        users <- loadUsersFile (cfgUsersFile cfg) >>= orDie
         when (Map.member user users) $ die' ("user " <> show name <> " already exists")
       hash <- promptNewPassword >>= hashPassword
-      addUser (cfgAuthUsersFile cfg) user hash >>= orDie
+      addUser (cfgUsersFile cfg) user hash >>= orDie
       putStrLn ("Added user " <> T.unpack name <> ". " <> restartNote)
     SetPassword name -> do
       user <- username name
-      users <- loadUsersFile (cfgAuthUsersFile cfg) >>= orDie
+      users <- loadUsersFile (cfgUsersFile cfg) >>= orDie
       unless (Map.member user users) $ die' ("no such user " <> show name)
       hash <- promptNewPassword >>= hashPassword
-      setPassword (cfgAuthUsersFile cfg) user hash >>= orDie
+      setPassword (cfgUsersFile cfg) user hash >>= orDie
       putStrLn ("Changed the password for " <> T.unpack name <> ". " <> restartNote)
     RemoveUser name -> do
       user <- username name
-      removeUser (cfgAuthUsersFile cfg) user >>= orDie
+      removeUser (cfgUsersFile cfg) user >>= orDie
       putStrLn ("Removed user " <> T.unpack name <> ". " <> restartNote)
   where
     username name = maybe (die' "Usernames must match [a-z0-9_-]{1,32}.") pure (parseUsername name)
@@ -118,7 +118,7 @@ serve :: Config -> IO ()
 serve cfg = do
   -- Output goes to container logs; flush each line rather than each block.
   hSetBuffering stdout LineBuffering
-  users <- loadUsersFile (cfgAuthUsersFile cfg) >>= orDie
+  users <- loadUsersFile (cfgUsersFile cfg) >>= orDie
   rateLimiter <- newRateLimiter 30 60 -- NFR-5: 30 pastes per user per minute
   -- NFR-11: Apache-format request log; bodies are never logged. Behind
   -- Caddy, the client address comes from X-Forwarded-For, which Caddy sets
@@ -141,6 +141,12 @@ serve cfg = do
     -- FR-21: purge at startup, then daily, for as long as the server runs.
     withAsync (purgeEvery (24 * 60 * 60 * 1000000) store getCurrentTime putStrLn) $ \_ -> do
       putStrLn ("Listening on port " <> show (cfgPort cfg))
+      -- AUTH-5 rejects form posts from any other origin, so an address that
+      -- differs even in host or port (e.g. 127.0.0.1 for localhost) fails.
+      putStrLn
+        ( "Base URL: " <> T.unpack (cfgBaseUrl cfg)
+            <> " (open the app at exactly this address; set BASE_URL to change it)"
+        )
       run (cfgPort cfg) (requestLogger (app env))
 
 -- | Reads a password twice without echoing it. Input that isn't a terminal

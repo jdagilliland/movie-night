@@ -231,5 +231,7 @@ securityHeaders = addHeaders headers
     headers =
       [ ("Content-Security-Policy", "default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self'")
       , ("X-Content-Type-Options", "nosniff")
-      , ("Referrer-Policy", "no-referrer")
+      -- Not no-referrer: under that policy browsers send "Origin: null" on
+      -- form posts, which the cross-origin check (AUTH-5) must reject.
+      , ("Referrer-Policy", "same-origin")
       ]

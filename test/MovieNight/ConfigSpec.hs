@@ -19,7 +19,7 @@ spec =
             , cfgBaseUrl = "http://localhost:8080"
             , cfgMaxPasteBytes = 524288
             , cfgPasteTtlDays = 30
-            , cfgAuthUsersFile = "./data/users"
+            , cfgUsersFile = "./data/users"
             , cfgTakedownLog = "./data/takedowns.log"
             }
 
@@ -30,7 +30,7 @@ spec =
         , ("BASE_URL", "https://example.com")
         , ("MAX_PASTE_BYTES", "1024")
         , ("PASTE_TTL_DAYS", "7")
-        , ("AUTH_USERS_FILE", "/data/users")
+        , ("USERS_FILE", "/data/users")
         , ("TAKEDOWN_LOG", "/data/logs/takedowns.log")
         ]
         `shouldBe` Right
@@ -40,12 +40,19 @@ spec =
             , cfgBaseUrl = "https://example.com"
             , cfgMaxPasteBytes = 1024
             , cfgPasteTtlDays = 7
-            , cfgAuthUsersFile = "/data/users"
+            , cfgUsersFile = "/data/users"
             , cfgTakedownLog = "/data/logs/takedowns.log"
             }
 
     it "strips trailing slashes from BASE_URL" $
       cfgBaseUrl <$> parseWith [("BASE_URL", "https://example.com//")]
+        `shouldBe` Right "https://example.com"
+
+    it "defaults BASE_URL to localhost on the configured PORT" $
+      cfgBaseUrl <$> parseWith [("PORT", "9000")] `shouldBe` Right "http://localhost:9000"
+
+    it "keeps an explicit BASE_URL regardless of PORT" $
+      cfgBaseUrl <$> parseWith [("PORT", "9000"), ("BASE_URL", "https://example.com")]
         `shouldBe` Right "https://example.com"
 
     it "rejects a non-numeric or out-of-range PORT" $

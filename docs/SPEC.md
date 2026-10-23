@@ -123,7 +123,7 @@ The `AuthHandler Request User` is built at startup from config, so changing auth
 
 ### 5.3 Interim mechanism (v1)
 Until the real flow is built, the `AuthHandler` validates HTTP Basic 
-credentials against an admin-managed list (`AUTH_USERS_FILE`, containing 
+credentials against an admin-managed list (`USERS_FILE`, containing 
 usernames + argon2id password hashes). This is real protection, 
 trivial at this traffic level, and needs no session storage. It is 
 explicitly temporary.
@@ -276,10 +276,10 @@ CREATE INDEX IF NOT EXISTS pastes_expires_at ON pastes(expires_at);
 |---|---|---|
 | `PORT` | `8080` | HTTP listen port |
 | `DB_PATH` | `./data/pastes.db` | SQLite file |
-| `BASE_URL` | `http://localhost:8080` | Used to build short URLs |
+| `BASE_URL` | `http://localhost:<PORT>` | Used to build short URLs and for the cross-origin check (AUTH-5) |
 | `MAX_PASTE_BYTES` | `524288` | Size limit |
 | `PASTE_TTL_DAYS` | `30` | Lifetime of newly created pastes |
-| `AUTH_USERS_FILE` | `./data/users` | Interim Basic-auth credentials (§5.3) |
+| `USERS_FILE` | `./data/users` | Interim Basic-auth credentials (§5.3) |
 | `TAKEDOWN_LOG` | `./data/takedowns.log` | Append-only takedown log (§6) |
 
 ## 8. Presentation
@@ -293,7 +293,12 @@ CREATE INDEX IF NOT EXISTS pastes_expires_at ON pastes(expires_at);
 
 ### 9.1 Security
 - **NFR-1:** All user content is HTML-escaped on render; never interpreted as markup.
-- **NFR-2:** Response headers: `Content-Security-Policy: default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self'`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`.
+- **NFR-2:** Response headers:
+  `Content-Security-Policy: default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self'`,
+  `X-Content-Type-Options: nosniff`, `Referrer-Policy: same-origin`. Other
+  sites never receive a referrer. The policy is not `no-referrer`, because
+  under that policy browsers send `Origin: null` on form posts, which
+  AUTH-5 must reject.
 - **NFR-3:** Raw endpoint always served as `text/plain` so browsers never sniff it as HTML.
 - **NFR-4:** Request body size is enforced at the WAI layer before the full body is read. The cap is 3 × `MAX_PASTE_BYTES` + 4 KiB, which allows for worst-case URL-encoding growth. The handler then checks the decoded text against `MAX_PASTE_BYTES` (FR-5). Both rejections return 413.
 - **NFR-5:** Per-user rate limit on paste creation: 30 per minute, as a
@@ -380,7 +385,7 @@ Route ordering: fixed paths (`/healthz`, `/static/*`, future `/auth/*`) must be 
     unit requires the data volume's mount, so the app never starts against
     an empty directory on the root volume. The app container mounts
     `/var/lib/movie-night` at `/data`, with `DB_PATH=/data/db/pastes.db`,
-    `AUTH_USERS_FILE=/data/users`, and `TAKEDOWN_LOG=/data/logs/takedowns.log`.
+    `USERS_FILE=/data/users`, and `TAKEDOWN_LOG=/data/logs/takedowns.log`.
     It runs as UID 10001, which owns the data directory. Container logs are
     rotated (5 × 10 MB). The host files are in `deploy/`.
   - Admin CLI commands run inside the app container

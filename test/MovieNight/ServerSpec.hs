@@ -201,7 +201,7 @@ spec = do
             lookup "Content-Security-Policy" (simpleHeaders r)
               `shouldBe` Just "default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self'"
             lookup "X-Content-Type-Options" (simpleHeaders r) `shouldBe` Just "nosniff"
-            lookup "Referrer-Policy" (simpleHeaders r) `shouldBe` Just "no-referrer"
+            lookup "Referrer-Policy" (simpleHeaders r) `shouldBe` Just "same-origin"
 
     describe "NFR-12: GET /healthz" $
       it "returns 200 when the store is healthy" $
@@ -304,6 +304,11 @@ spec = do
 
       it "rejects a post from another origin" $
         postPaste [alice, ("Origin", "https://evil.example")] "hello" `shouldRespondWith` 403
+
+      -- Any page can make the browser send "null" by choosing a no-referrer
+      -- policy, so accepting it would disable the check.
+      it "rejects a post with an opaque (null) origin" $
+        postPaste [alice, ("Origin", "null")] "hello" `shouldRespondWith` 403
 
     describe "NFR-5: rate limiting" $
       it "refuses a user's pastes beyond the limit with 429" $ do

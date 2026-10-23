@@ -46,7 +46,7 @@ COPY --from=build /out/movie-night /usr/local/bin/movie-night
 ENV TZ=UTC \
     PORT=8080 \
     DB_PATH=/data/db/pastes.db \
-    AUTH_USERS_FILE=/data/users \
+    USERS_FILE=/data/users \
     TAKEDOWN_LOG=/data/logs/takedowns.log
 
 USER movienight

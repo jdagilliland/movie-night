@@ -18,7 +18,7 @@ data Config = Config
   -- ^ Without a trailing slash.
   , cfgMaxPasteBytes :: Int
   , cfgPasteTtlDays :: Int
-  , cfgAuthUsersFile :: FilePath
+  , cfgUsersFile :: FilePath
   , cfgTakedownLog :: FilePath
   }
   deriving stock (Eq, Show)
@@ -34,10 +34,12 @@ parseConfig lookupVar = do
     Config
       { cfgPort = port
       , cfgDbPath = withDefault "DB_PATH" "./data/pastes.db"
-      , cfgBaseUrl = T.dropWhileEnd (== '/') (T.pack (withDefault "BASE_URL" "http://localhost:8080"))
+      , -- The default follows PORT, so a local server on another port still
+        -- passes its own cross-origin check (AUTH-5).
+        cfgBaseUrl = T.dropWhileEnd (== '/') (T.pack (withDefault "BASE_URL" ("http://localhost:" <> show port)))
       , cfgMaxPasteBytes = maxPasteBytes
       , cfgPasteTtlDays = ttlDays
-      , cfgAuthUsersFile = withDefault "AUTH_USERS_FILE" "./data/users"
+      , cfgUsersFile = withDefault "USERS_FILE" "./data/users"
       , cfgTakedownLog = withDefault "TAKEDOWN_LOG" "./data/takedowns.log"
       }
   where
