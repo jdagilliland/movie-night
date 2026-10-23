@@ -1,0 +1,9 @@
+# Caddy obtains and renews a Let's Encrypt certificate for the domain and
+# redirects HTTP to HTTPS (NFR-7). For "localhost" it uses its own local CA.
+{$MOVIE_NIGHT_DOMAIN} {
+	encode zstd gzip
+
+	# Caddy sets X-Forwarded-For to the real client address, replacing any
+	# value the client sent; the app's request log relies on this.
+	reverse_proxy app:8080
+}

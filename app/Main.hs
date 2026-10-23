@@ -18,7 +18,13 @@ import MovieNight.Store (Store, storePurgeExpired)
 import MovieNight.Store.SQLite (withSQLiteStore)
 import MovieNight.Users
 import Network.Wai.Handler.Warp (run)
-import Network.Wai.Middleware.RequestLogger (logStdout)
+import Network.Wai.Middleware.RequestLogger
+  ( IPAddrSource (..)
+  , OutputFormat (..)
+  , defaultRequestLoggerSettings
+  , mkRequestLogger
+  , outputFormat
+  )
 import Options.Applicative
 import System.Directory (doesFileExist)
 import System.Exit (exitFailure)
@@ -114,6 +120,12 @@ serve cfg = do
   hSetBuffering stdout LineBuffering
   users <- loadUsersFile (cfgAuthUsersFile cfg) >>= orDie
   rateLimiter <- newRateLimiter 30 60 -- NFR-5: 30 pastes per user per minute
+  -- NFR-11: Apache-format request log; bodies are never logged. Behind
+  -- Caddy, the client address comes from X-Forwarded-For, which Caddy sets
+  -- itself (discarding any value the client sent); without a proxy, the
+  -- socket address is used.
+  requestLogger <-
+    mkRequestLogger defaultRequestLoggerSettings {outputFormat = Apache FromFallback}
   withSQLiteStore (cfgDbPath cfg) $ \store -> do
     let env =
           Env
@@ -129,8 +141,7 @@ serve cfg = do
     -- FR-21: purge at startup, then daily, for as long as the server runs.
     withAsync (purgeEvery (24 * 60 * 60 * 1000000) store getCurrentTime putStrLn) $ \_ -> do
       putStrLn ("Listening on port " <> show (cfgPort cfg))
-      -- NFR-11: Apache-format request log; bodies are never logged.
-      run (cfgPort cfg) (logStdout (app env))
+      run (cfgPort cfg) (requestLogger (app env))
 
 -- | Reads a password twice without echoing it. Input that isn't a terminal
 -- (e.g. a pipe) is read as-is, one line per prompt.

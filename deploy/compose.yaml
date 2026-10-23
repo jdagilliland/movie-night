@@ -1,0 +1,46 @@
+# Movie Night on a single host: the app behind Caddy, which terminates TLS
+# (SPEC §12). Settings come from a .env file next to this one; see
+# .env.example.
+
+x-logging: &logging
+  # Rotated, so container logs can't fill the disk.
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: "5"
+
+services:
+  app:
+    image: ${MOVIE_NIGHT_IMAGE:-movie-night:local}
+    build: ..
+    restart: unless-stopped
+    environment:
+      BASE_URL: https://${MOVIE_NIGHT_DOMAIN:?set MOVIE_NIGHT_DOMAIN in .env}
+      PASTE_TTL_DAYS: ${PASTE_TTL_DAYS:-30}
+    volumes:
+      # The whole data volume, so add-user can write its temporary file next
+      # to the users file and rename it into place.
+      - ${MOVIE_NIGHT_DATA:-/var/lib/movie-night}:/data
+    # Reachable only from Caddy; no ports are published.
+    expose:
+      - "8080"
+    logging: *logging
+
+  caddy:
+    image: caddy:2.11
+    restart: unless-stopped
+    depends_on:
+      - app
+    environment:
+      MOVIE_NIGHT_DOMAIN: ${MOVIE_NIGHT_DOMAIN}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Certificates persist on the data volume, so a new container doesn't
+      # request new ones (Let's Encrypt rate-limits re-issuance).
+      - ${MOVIE_NIGHT_DATA:-/var/lib/movie-night}/caddy/data:/data
+      - ${MOVIE_NIGHT_DATA:-/var/lib/movie-night}/caddy/config:/config
+    logging: *logging

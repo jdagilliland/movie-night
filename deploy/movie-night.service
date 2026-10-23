@@ -1,0 +1,29 @@
+# Starts the Movie Night stack on boot (SPEC §12). Docker's restart policy
+# (restart: unless-stopped in compose.yaml) restarts containers that fail.
+#
+# Install: copy deploy/ to /opt/movie-night, then
+#   sudo cp /opt/movie-night/movie-night.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now movie-night
+
+[Unit]
+Description=Movie Night (Docker Compose)
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+# The data volume is mounted with nofail, so boot continues without it.
+# Without this line the app would then start against an empty directory on
+# the root volume and create a fresh database there.
+RequiresMountsFor=/var/lib/movie-night
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/movie-night
+ExecStart=/usr/bin/docker compose up --detach --remove-orphans
+ExecStop=/usr/bin/docker compose down
+# Pulling images on first start can take a while.
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target

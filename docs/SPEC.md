@@ -188,7 +188,11 @@ movie-night set-password <name>                     # prompt for password; repla
 movie-night remove-user <name>                      # remove the user; their pastes are unaffected
 ```
 
-- Takedowns are logged to an append-only file (`TAKEDOWN_LOG`, §7.4): the ID, reason, and UTC timestamp, never the content. The DB row keeps `taken_down_at` and `takedown_reason` until purged, so the log is the lasting record. It is used to re-apply takedowns after a restore (NFR-13) and must be included in backups.
+- Takedowns are logged to an append-only file (`TAKEDOWN_LOG`, §7.4): the
+  ID, reason, and UTC timestamp, never the content. The DB row keeps
+  `taken_down_at` and `takedown_reason` until purged, so the log is the
+  lasting record. It is used to re-apply takedowns after a database restore
+  (NFR-13) and must be included in backups.
 - The log has one JSON object per line, e.g.
   `{"id":"abcdEFGH","reason":"spam","time":"2026-10-23T12:00:00Z"}`.
   Only takedowns that erase content are logged; a repeat takedown is not.
@@ -305,8 +309,18 @@ CREATE INDEX IF NOT EXISTS pastes_expires_at ON pastes(expires_at);
 
 ### 9.3 Reliability & Operations
 - **NFR-11:** Request logging (Apache-style); takedown events are logged (§6). Paste content and credentials are never logged.
+  The client address is taken from `X-Forwarded-For`, which Caddy sets
+  (replacing any client-supplied value), falling back to the socket address
+  when there is no proxy.
 - **NFR-12:** `GET /healthz` returns 200 when the DB is reachable.
-- **NFR-13:** The data volume (database, takedown log, users file, TLS certificates) is backed up by daily EBS snapshots (§12). Takedowns recorded in the log after the snapshot are re-applied after a restore.
+- **NFR-13:** The data volume (database, takedown log, users file, TLS
+  certificates) is backed up by daily EBS snapshots (§12). If only the
+  database is restored from an older snapshot, takedowns recorded in the
+  current log after that snapshot are re-applied. If the whole volume is
+  restored, the log is restored with it, so takedowns made since the
+  snapshot are lost along with pastes made since then. This is accepted:
+  takedowns need not be retained more rigorously than pastes, and the admin
+  re-applies any recent takedowns from their own records.
 
 ## 10. Endpoints (v1)
 
@@ -361,10 +375,14 @@ Route ordering: fixed paths (`/healthz`, `/static/*`, future `/auth/*`) must be 
     └── caddy/                (TLS certificates; persisted to avoid Let's Encrypt rate limits)
     ```
 
-  - Runtime: Docker Compose (app + Caddy), run by a systemd unit so it starts on boot
-    and restarts on failure. The app container mounts `/var/lib/movie-night` at
-    `/data`, with `DB_PATH=/data/db/pastes.db`, `AUTH_USERS_FILE=/data/users`, and
-    `TAKEDOWN_LOG=/data/logs/takedowns.log`.
+  - Runtime: Docker Compose (app + Caddy), started on boot by a systemd unit;
+    Docker's `unless-stopped` restart policy restarts failed containers. The
+    unit requires the data volume's mount, so the app never starts against
+    an empty directory on the root volume. The app container mounts
+    `/var/lib/movie-night` at `/data`, with `DB_PATH=/data/db/pastes.db`,
+    `AUTH_USERS_FILE=/data/users`, and `TAKEDOWN_LOG=/data/logs/takedowns.log`.
+    It runs as UID 10001, which owns the data directory. Container logs are
+    rotated (5 × 10 MB). The host files are in `deploy/`.
   - Admin CLI commands run inside the app container
     (`docker compose exec app movie-night ...`), so they see the same paths as the
     server.
