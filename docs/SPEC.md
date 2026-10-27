@@ -443,9 +443,12 @@ Route ordering: fixed paths (`/healthz`, `/static/*`, future `/auth/*`) must be 
     add to the monthly cost.
   - HTTPS (NFR-7): TLS terminates on the instance (e.g. Caddy with Let's Encrypt).
     No load balancer, since an ALB alone would exceed the target cost.
-  - Images: built Docker images are pushed to ECR and pulled by the instance.
-    ECR keeps the 10 most recent images. The host's Compose file has no
-    build section, so the instance only ever pulls.
+  - Images: CI pushes each build to ECR as `:<commit>` and `:latest`, and
+    a newly provisioned instance starts from `:latest`. ECR keeps the 10
+    most recent images. The host's Compose file has no build section, so
+    the instance only ever pulls. (Planned with CD: immutable commit tags,
+    and `:latest` moved only by a successful deploy; see Continuous
+    deployment.)
   - Backups (NFR-13): daily EBS snapshots of the data volume via Data Lifecycle
     Manager, with a retention count set by an OpenTofu variable. SQLite in WAL mode
     recovers cleanly from a crash-consistent snapshot. Up to one day of data can be
@@ -468,53 +471,165 @@ Route ordering: fixed paths (`/healthz`, `/static/*`, future `/auth/*`) must be 
     Actions native ARM runners (`ubuntu-24.04-arm`), not under QEMU
     emulation. The test job caches the Stack store, and the image job caches
     Docker layers, between runs.
-  - CI pushes images to ECR as `:<commit>` and `:latest`, only for pushes to
-    `main` that pass the tests. It authenticates via GitHub OIDC with an
-    OpenTofu-managed IAM role (no long-lived AWS keys in GitHub), which only
-    workflows on `main` of this repository can assume, and which may only
-    push to the Movie Night repository.
-  - Continuous deployment: every push to `main` that passes the tests is
+  - CI: for pushes to `main` that pass the tests, the `image` job builds the
+    image and pushes `:<commit>` and `:latest` to ECR. It authenticates via
+    GitHub OIDC with an OpenTofu-managed IAM role (no long-lived AWS keys in
+    GitHub), which only workflows on `main` of this repository can assume,
+    which may only push to the Movie Night repository, and which has no
+    access to the instance.
+  - Deploys are manual for now: in a shell on the instance, pull the new
+    image and recreate the app container (README, "Deploying a new
+    version").
+  - Continuous deployment. **Status: planned, not implemented.** Everything
+    in this bullet is the agreed design, red-teamed for security and
+    reliability; none of it exists yet, and deploys stay manual until it
+    does. When implemented, every push to `main` that passes the tests is
     built and deployed automatically, with no approval step.
-    - Flow: `build-and-test` → `image` (pushes `:<commit>` and `:latest`)
-      → `deploy`. Deploys run one at a time (a GitHub Actions concurrency
-      group); a newer deploy waits rather than cancelling one in progress.
-    - The deploy job assumes the same OIDC role as the image job and runs
-      a deploy script on the instance through Systems Manager Run Command
-      (`aws ssm send-command`, document `AWS-RunShellScript`), targeting
-      the instance by its `Name=movie-night` tag so replacing the instance
-      needs no CI change. No inbound port is needed. The job waits for the
-      command and fails if it fails.
-    - The script lives in the repository (`deploy/deploy.sh`) and is sent
-      with each command, so it is always the version from the commit
-      being deployed.
-    - Deploys pin the commit's image, not `:latest`: the script records the
-      currently deployed image, sets `MOVIE_NIGHT_IMAGE` in
-      `/opt/movie-night/.env` to `<repository>:<commit>`, then runs
-      `docker compose pull app` and `docker compose up --detach app`. The
-      running version is therefore always known, and the previous one is
-      what a rollback restores. Only the app container is recreated; Caddy
-      keeps running, so downtime is a few seconds.
-    - Health check and rollback: the script polls `/healthz` through Caddy
-      on the instance itself (`curl --resolve <domain>:443:127.0.0.1`) for
-      up to about a minute. If it never succeeds, the script restores the
-      previous image, brings it back up, and exits non-zero, so the job
-      fails and GitHub notifies the admin. After a successful deploy, the
-      job also checks `https://<domain>/healthz` from the runner, to cover
-      DNS and TLS; a failure there fails the job but doesn't roll back.
+    - Flow: `build-and-test` → `image` → `deploy`. Deploys run one at a
+      time (a GitHub Actions concurrency group); a newer deploy waits
+      rather than cancelling one in progress. A push's deploy is skipped
+      if its commit is no longer the head of `main`, so builds that finish
+      out of order can't deploy an older commit over a newer one. For the
+      same reason, re-running an old run's deploy does nothing.
+    - Credentials: running commands on the instance is effectively root
+      access, so only the deploy job can do it. It runs in a GitHub
+      environment `production` that only `main` may use, and assumes its
+      own role, separate from the image role, trusted only for the subject
+      `repo:OWNER@OWNER_ID/NAME@REPO_ID:environment:production`. The role
+      may:
+      - `ssm:SendCommand`, only with the `AWS-RunShellScript` document and
+        only on instances tagged `DeployTarget=movie-night`. The dedicated
+        tag keeps any other instance that happens to be named
+        `movie-night` from being a target.
+      - `ssm:GetCommandInvocation` and `ssm:ListCommandInvocations`, to
+        follow the command; `ec2:DescribeInstances` and
+        `ssm:DescribeInstanceInformation`, to find the target.
+      - `ecr:DescribeImages`, `ecr:BatchGetImage`, and `ecr:PutImage` on
+        the Movie Night repository, to resolve image digests and move
+        `:latest`.
+
+      The deploy job uses only checkout, the AWS credentials action, and
+      the AWS CLI already on the runner.
+    - Targeting: the job requires exactly one running instance tagged
+      `DeployTarget=movie-night` whose Systems Manager agent is online,
+      and sends the command to that instance by ID. With none or several,
+      it fails, rather than reporting success for a command that reached
+      nothing. The command has a delivery timeout of 2 minutes and an
+      execution timeout of 10 minutes; the job polls for the result itself
+      and has its own timeout.
+    - What is deployed: the commit's image by digest
+      (`<repository>@sha256:…`), taken from the image job's output, or
+      looked up in ECR for a manual deploy. A tag isn't trusted to name it.
+    - The script, `deploy/deploy.sh`, is in the repository and is sent with
+      each command. It is always the version at the head of `main`: for a
+      push deploy that is the deployed commit, and a manual deploy of an
+      older image still uses the newest script.
+    - The script, in order:
+      1. Refuses to run unless first-boot setup has finished
+         (`cloud-init status`), the data volume is mounted at
+         `/var/lib/movie-night`, the systemd unit is active, and at least
+         1 GB of disk is free. Starting the app directly would otherwise
+         bypass the unit's guard against a missing data volume, and create
+         a fresh, empty database on the root volume. The unit being active
+         means the first start, with its first user, was done by hand. The
+         script then takes a lock on `/opt/movie-night/.deploy.lock` with
+         `flock`, waiting up to a minute for it.
+      2. Records the currently running image as the rollback target.
+      3. Pulls the new image before changing anything, so a failed pull
+         leaves the running app untouched.
+      4. Writes the new `MOVIE_NIGHT_IMAGE` to `/opt/movie-night/.env`
+         atomically (a temporary file, then a rename), and recreates only
+         the app container (`docker compose up --detach app`). Caddy keeps
+         running, so downtime is a few seconds.
+      5. Checks health: polls `/healthz` through Caddy on the instance
+         itself (`curl -k --resolve <domain>:443:127.0.0.1`), requiring 3
+         passes in a row within about a minute, and checks that the
+         container runs the expected image and hasn't restarted.
+         Certificate checks are skipped (`-k`) because TLS isn't the new
+         image's concern, and a new instance may not have its certificate
+         yet.
+      6. On failure, rolls back: restores the previous image in `.env`,
+         brings it up without pulling (it is still on the instance), and
+         checks the rollback's health too. It exits non-zero either way,
+         and says plainly if the rollback also failed.
+      7. On success, deletes the instance's Movie Night images other than
+         the current and previous ones, so the 8 GB root volume doesn't
+         fill up.
+    - After the script succeeds, the job moves `:latest` to the deployed
+      digest (`aws ecr put-image`). A replaced instance, or a manual pull,
+      therefore gets the last known good image, never one that failed its
+      deploy. The job then checks `https://<domain>/healthz` from the
+      runner, to cover DNS and TLS. A failure there fails the job but
+      doesn't roll back.
+    - Output: the repository is public, so its Actions logs are too, and
+      the command's output appears in them. The script prints only a short
+      summary, plus on failure the target and restored images,
+      `docker compose ps`, and the app's last 30 log lines. It never prints
+      `.env`, never touches the users file, and doesn't trace commands
+      (`set -x`). Systems Manager keeps only about 2,500 characters of a
+      command's output, so the summary must fit.
     - Manual deploys and rollbacks: the workflow can also be run by hand
-      (`workflow_dispatch`) with a commit to deploy. Only images ECR still
-      keeps (the 10 most recent) can be deployed.
-    - Permissions: the CI role additionally gets `ssm:SendCommand` for
-      `AWS-RunShellScript` on instances tagged `Name=movie-night`, and
-      `ssm:GetCommandInvocation` and `ssm:ListCommandInvocations` to wait
-      for results. It still can only be assumed from `main` of this
-      repository.
-    - Out of scope for CD: changes to the other files in `deploy/`
-      (`compose.yaml`, `Caddyfile`, the systemd unit), which reach the
-      instance only when it is replaced or by hand; infrastructure changes,
-      which remain a manual `tofu apply`; and database migrations, which
-      don't exist yet. A schema change would need the deploy script to
-      migrate before switching images.
+      (`workflow_dispatch`) with a commit to deploy. The input is passed
+      through an environment variable, never interpolated into a shell
+      command or the command's parameters (which are built with `jq`), and
+      must be a 40-character commit hash that is an ancestor of `main`.
+      Only images ECR still keeps (the 10 most recent) can be deployed.
+    - Out of scope for CD:
+      - Changes to the other files in `deploy/` (`compose.yaml`, the
+        `Caddyfile`, the systemd unit), which reach the instance only when
+        it is replaced or by hand. One such change is recommended: `init:
+        true` for the app service, so its container stops promptly rather
+        than after Docker's 10-second timeout.
+      - Infrastructure changes, which remain a manual `tofu apply`.
+      - Database migrations, which don't exist yet. A schema change would
+        need the script to migrate before switching images, and the
+        previous image to work with the migrated schema for rollback.
+    - Admin commands go through a wrapper: `flock` locks are advisory, so
+      they only coordinate processes that also take the lock, and a plain
+      `docker compose` command or an editor ignores it. A wrapper,
+      `/opt/movie-night/mn`, therefore runs `docker compose` in
+      `/opt/movie-night` while holding the same lock, e.g.
+      `./mn exec app movie-night takedown <id> --reason "…"`, so an admin
+      command waits for a deploy in progress and vice versa. The README's
+      admin commands use it. Editing `.env` by hand is not covered;
+      it should be done only when no deploy is running.
+    - Changes CD makes to existing parts:
+      - Images: commit tags become immutable, so a commit's tag always
+        names the image CI built from it. `:latest` stays the only mutable
+        tag but changes meaning to "last known good". The image job no
+        longer pushes it; only a successful deploy moves it. The one
+        exception is a brand-new setup: if no `:latest` exists yet, the
+        image job creates it, so the first start by hand has an image to
+        pull (deploys refuse to run until that first start).
+      - Instance role: narrowed to what the instance needs, namely pulling
+        images from the Movie Night ECR repository (plus
+        `ecr:GetAuthorizationToken`) and the Systems Manager agent's own
+        calls (`ssm:UpdateInstanceInformation`, `ssmmessages:*`,
+        `ec2messages:*`). It currently has AWS's broad managed policies,
+        which let root on the instance read every ECR repository and every
+        Parameter Store value in the account; CD makes root on the
+        instance reachable from CI, which makes that matter. This can also
+        be done on its own, before CD.
+      - Workflow hardening: every third-party action is pinned to a full
+        commit SHA, with its version in a comment, and kept current by
+        Dependabot. A tag such as `@v4` can be moved, which would run
+        someone else's code with the job's credentials. `id-token: write`
+        is granted only to jobs that assume an AWS role. `main` is
+        protected against force pushes and deletion. This can also be done
+        on its own, before CD.
+      - The instance gets the `DeployTarget=movie-night` tag, and the
+        README's "Deploying a new version" is replaced by how to run and
+        follow the deploy workflow.
+    - To check when implementing:
+      - Whether the AWS provider can make every ECR tag immutable except
+        `:latest` (an exclusion filter on tag immutability). If not, keep
+        the tags mutable and store the last-known-good digest elsewhere,
+        e.g. an SSM parameter that the deploy job writes and first boot
+        reads.
+      - The GitHub settings are outside OpenTofu: the `production`
+        environment, limited to `main`, and the protection of `main`.
+        Either provide `gh api` commands for the admin to run, or describe
+        the steps in the README.
   - Cost monitoring: an AWS Budgets budget of $10/month, alerting by email on 100%
     of actual spend and 100% of forecasted spend. Alerts only, no automatic actions.
 
