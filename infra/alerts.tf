@@ -15,6 +15,8 @@ resource "aws_sns_topic_subscription" "alerts_email" {
 # Probes the public URL from several AWS regions, so it catches a stopped
 # instance, a crashed container, a bad certificate, and broken DNS alike.
 # /healthz returns 200 only when the database is reachable (SPEC NFR-12).
+# Three probe regions (the minimum) keep the request log quiet; the
+# default of about 15 means roughly 30 requests a minute.
 resource "aws_route53_health_check" "app" {
   type              = "HTTPS"
   fqdn              = var.domain
@@ -23,6 +25,7 @@ resource "aws_route53_health_check" "app" {
   request_interval  = 30
   failure_threshold = 3
   enable_sni        = true
+  regions           = ["us-east-1", "us-west-2", "eu-west-1"]
 
   tags = { Name = "movie-night" }
 }
