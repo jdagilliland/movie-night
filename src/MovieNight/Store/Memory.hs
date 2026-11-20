@@ -4,8 +4,10 @@ module MovieNight.Store.Memory
   ) where
 
 import Data.IORef (atomicModifyIORef', newIORef, readIORef)
+import Data.List (maximumBy)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
+import Data.Ord (comparing)
 import MovieNight.Paste (Paste (..))
 import MovieNight.PasteId (PasteId)
 import MovieNight.Store
@@ -14,7 +16,12 @@ data Entry = Entry
   { entryPaste :: Paste
   -- ^ Content is blanked once taken down.
   , entryTakedown :: Maybe Takedown
+  , entrySeq :: Int
+  -- ^ Insertion order, to break ties in 'storeLatest'.
   }
+
+nextSeq :: Map PasteId Entry -> Int
+nextSeq m = maximum (0 : map entrySeq (Map.elems m)) + 1
 
 newMemoryStore :: IO Store
 newMemoryStore = do
@@ -30,7 +37,13 @@ newMemoryStore = do
                   }
            in if Map.member (pasteId paste) m
                 then (m, Left DuplicateId)
-                else (Map.insert (pasteId paste) (Entry stored Nothing) m, Right ())
+                else
+                  ( Map.insert
+                      (pasteId paste)
+                      (Entry stored Nothing (nextSeq m))
+                      m
+                  , Right ()
+                  )
       , storeLookup = \now pid -> do
           m <- readIORef ref
           pure $ case Map.lookup pid m of
@@ -42,15 +55,35 @@ newMemoryStore = do
       , storeTakedown = \pid reason now -> modify $ \m ->
           case Map.lookup pid m of
             Nothing -> (m, NoSuchPaste)
-            Just (Entry _ (Just _)) -> (m, AlreadyTakenDown)
-            Just (Entry p Nothing) ->
-              ( Map.insert pid (Entry p {pasteContent = ""} (Just (Takedown (truncateToSecond now) reason))) m
+            Just (Entry _ (Just _) _) -> (m, AlreadyTakenDown)
+            Just (Entry p Nothing n) ->
+              ( Map.insert
+                  pid
+                  ( Entry
+                      p {pasteContent = ""}
+                      (Just (Takedown (truncateToSecond now) reason))
+                      n
+                  )
+                  m
               , TakenDown
               )
+      , storeLatest = \now -> do
+          m <- readIORef ref
+          let live =
+                [ e
+                | e <- Map.elems m
+                , Nothing <- [entryTakedown e]
+                , pasteExpiresAt (entryPaste e) > now
+                ]
+              key e = (pasteCreatedAt (entryPaste e), entrySeq e)
+          pure $ case live of
+            [] -> Nothing
+            _ ->
+              Just (pasteId (entryPaste (maximumBy (comparing key) live)))
       , storeInspect = \pid -> do
           m <- readIORef ref
           pure $ do
-            Entry p takedown <- Map.lookup pid m
+            Entry p takedown _ <- Map.lookup pid m
             Just (PasteInfo (pasteCreatedBy p) (pasteCreatedAt p) (pasteExpiresAt p) takedown)
       , storePurgeExpired = \now -> modify $ \m ->
           let (expired, kept) = Map.partition ((<= now) . pasteExpiresAt . entryPaste) m

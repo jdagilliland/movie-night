@@ -118,6 +118,43 @@ storeContract withFreshStore = around withFreshStore $ do
       _ <- storeInsert s p
       storePurgeExpired s t0 `shouldReturn` 0
 
+  describe "FR-28: storeLatest" $ do
+    let later =
+          (mkPaste "12345678" "later") {pasteCreatedAt = addUTCTime 60 t0}
+
+    it "returns Nothing when there are no pastes" $ \s ->
+      storeLatest s t0 `shouldReturn` Nothing
+
+    it "returns the newest paste by creation time" $ \s -> do
+      _ <- storeInsert s later
+      _ <- storeInsert s p
+      storeLatest s t0 `shouldReturn` Just (pasteId later)
+
+    it "lets the later insert win a tie" $ \s -> do
+      _ <- storeInsert s p
+      _ <- storeInsert s other
+      storeLatest s t0 `shouldReturn` Just (pasteId other)
+
+    it "falls back past a taken-down paste" $ \s -> do
+      _ <- storeInsert s p
+      _ <- storeInsert s later
+      _ <- storeTakedown s (pasteId later) "spam" t0
+      storeLatest s t0 `shouldReturn` Just (pasteId p)
+
+    it "falls back past an expired paste" $ \s -> do
+      let short = later {pasteExpiresAt = addUTCTime nominalDay t0}
+      _ <- storeInsert s p
+      _ <- storeInsert s short
+      storeLatest s t0 `shouldReturn` Just (pasteId short)
+      storeLatest s (addUTCTime (2 * nominalDay) t0)
+        `shouldReturn` Just (pasteId p)
+
+    it "returns Nothing when nothing is live" $ \s -> do
+      _ <- storeInsert s p
+      _ <- storeTakedown s (pasteId p) "spam" t0
+      storeLatest s t0 `shouldReturn` Nothing
+      storeLatest s expiry `shouldReturn` Nothing
+
   describe "§6: storeInspect" $ do
     let info = PasteInfo "alice" t0 expiry Nothing
 
