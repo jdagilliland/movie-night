@@ -1,5 +1,6 @@
 .stack-work/
 dist-newstyle/
+/result
 /data/
 /deploy/.env
 /deploy/data/
