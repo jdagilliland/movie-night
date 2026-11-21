@@ -13,6 +13,7 @@ A minimal web application where an authenticated user pastes text, submits it, a
 - Persist data across restarts/redeploys.
 - Expire pastes after an admin-configured TTL.
 - Let admins take down content.
+- Offer one fixed link that always leads to the most recent paste.
 - Require authentication to create; viewing is public.
 - Backend in Haskell using Servant.
 
@@ -36,6 +37,9 @@ A minimal web application where an authenticated user pastes text, submits it, a
 5. **Not found:** As a recipient of a bad, expired, or removed link, I see a clear "not found" message.
 6. **Takedown:** As an admin, I can take down a paste by ID so its content is no longer served.
 7. **Expiry config:** As an admin, I can configure how long pastes live.
+8. **Latest:** As a creator, I can give viewers one fixed link
+   (`/latest`) that always shows the most recent paste, so I don't have
+   to send a new link each time.
 
 ## 4. Functional Requirements
 
@@ -87,6 +91,25 @@ A minimal web application where an authenticated user pastes text, submits it, a
 
 ### 4.6 Persistence
 - **FR-26:** Pastes survive application restarts.
+
+### 4.7 Latest link
+- **FR-27:** `GET /latest` is public, like all view routes (FR-12), and
+  responds 302 with `Location: /<id>`, where `<id>` is the newest paste
+  by anyone. The response has `Cache-Control: no-store` so the target
+  is never cached, and no body that could reveal the paste.
+- **FR-28:** "Newest" means greatest `created_at`, ties broken by
+  `rowid`. Only live pastes are considered: expired (FR-20) and
+  taken-down (FR-24) pastes are skipped. If the newest paste is taken
+  down or expired, `/latest` falls back to the newest one that is
+  still live.
+- **FR-29:** If no live paste exists, `/latest` returns the same 404
+  page as an unknown ID (FR-16).
+- **FR-30:** `GET /latest/raw` likewise responds 302 to `/<id>/raw`,
+  and returns 404 under the same conditions.
+- **FR-31:** Every paste is eligible. A new paste is reachable through
+  `/latest` as soon as it is created, so FR-9 (unguessable IDs) no
+  longer keeps the newest paste private until its link is shared. This
+  is accepted. Older pastes remain reachable only by their ID.
 
 ## 5. Authentication (stub plan)
 
@@ -241,6 +264,7 @@ data Store = Store
   { storeInsert       :: Paste -> IO (Either InsertError ())     -- DuplicateId on collision
   , storeLookup       :: UTCTime -> PasteId -> IO LookupResult   -- "now" passed in for testable expiry
   , storeTakedown     :: PasteId -> Text -> UTCTime -> IO TakedownResult
+  , storeLatest       :: UTCTime -> IO (Maybe PasteId)           -- newest live paste (`/latest`)
   , storeInspect      :: PasteId -> IO (Maybe PasteInfo)         -- metadata, any status (`show`)
   , storePurgeExpired :: UTCTime -> IO Int                       -- rows purged
   , storeHealthy      :: IO Bool                                 -- `/healthz`
@@ -260,7 +284,12 @@ CREATE TABLE IF NOT EXISTS pastes (
   takedown_reason  TEXT
 );
 CREATE INDEX IF NOT EXISTS pastes_expires_at ON pastes(expires_at);
+CREATE INDEX IF NOT EXISTS pastes_created_at ON pastes(created_at);
 ```
+
+- `storeLatest` selects the row with `taken_down_at IS NULL` and
+  `expires_at > now`, ordered by `created_at DESC, rowid DESC`,
+  limit 1.
 
 - Enable WAL mode (`PRAGMA journal_mode=WAL`) and a busy timeout so the CLI and server coexist.
 - Timestamps are stored as fixed-width ISO-8601 UTC text at whole-second
@@ -359,12 +388,16 @@ CREATE INDEX IF NOT EXISTS pastes_expires_at ON pastes(expires_at);
 |---|---|---|---|---|
 | GET | `/` | required | 200 HTML form | 401 / sign-in prompt |
 | POST | `/` | required | 303 → `/<id>` | 400 empty, 401, 403 cross-origin, 413 too large, 429 rate limited |
+| GET | `/latest` | none | 302 → `/<id>` of newest live paste | 404 no live paste |
+| GET | `/latest/raw` | none | 302 → `/<id>/raw` | 404 no live paste |
 | GET | `/:id` | none | 200 HTML | 400 malformed, 404 missing, expired, or taken down |
 | GET | `/:id/raw` | none | 200 text/plain | 400, 404 |
 | GET | `/static/paste.js` | none | 200 text/javascript | — |
 | GET | `/healthz` | none | 200 | 503 if DB unreachable |
 
-Route ordering: fixed paths (`/healthz`, `/static/*`, future `/auth/*`) must be matched before `Capture "pasteId"`. `PasteId` parsing (8-char base62) also prevents them from colliding.
+Route ordering: fixed paths (`/latest`, `/healthz`, `/static/*`, future
+`/auth/*`) must be matched before `Capture "pasteId"`. `PasteId` parsing
+(8-char base62) also prevents them from colliding.
 
 ## 11. Testing Requirements
 
@@ -379,6 +412,11 @@ Route ordering: fixed paths (`/healthz`, `/static/*`, future `/auth/*`) must be 
 - **Size limits:** decoded text at exactly `MAX_PASTE_BYTES` is accepted even when its encoded body is larger; one byte over → 413; an oversized raw body → 413.
 - **Users file:** parsing accepts comments and blank lines and rejects malformed lines; the server refuses to start on a world-readable file; `add-user` / `set-password` / `remove-user` round-trip.
 - **Admin:** takedown erases content, yields 404 publicly, and is logged; repeat takedown is idempotent; purge removes only expired rows.
+- **Latest:** `/latest` redirects to the newest paste, with
+  `no-store`; with equal `created_at`, the later insert wins; skips
+  expired and taken-down pastes, falling back to the newest live one;
+  404 with no live paste; `/latest/raw` redirects to the raw view; needs
+  no credentials.
 - **Persistence:** create paste, restart app against the same DB file, fetch succeeds.
 
 ## 12. Future Work

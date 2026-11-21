@@ -29,7 +29,7 @@ import Database.SQLite.Simple.FromField (FromField (..), ResultError (..), retur
 import Database.SQLite.Simple.ToField (ToField (..))
 import Database.SQLite.Simple.Ok (Ok (..))
 import MovieNight.Paste (Paste (..))
-import MovieNight.PasteId (pasteIdText)
+import MovieNight.PasteId (parsePasteId, pasteIdText)
 import MovieNight.Store
 import System.Directory (createDirectoryIfMissing)
 import System.FilePath (takeDirectory)
@@ -66,6 +66,8 @@ initialize conn = do
     \  takedown_reason  TEXT\
     \)"
   execute_ conn "CREATE INDEX IF NOT EXISTS pastes_expires_at ON pastes(expires_at)"
+  execute_ conn
+    "CREATE INDEX IF NOT EXISTS pastes_created_at ON pastes(created_at)"
 
 sqliteStore :: (forall a. (Connection -> IO a) -> IO a) -> Store
 sqliteStore withConn =
@@ -109,6 +111,16 @@ sqliteStore withConn =
             pure $ case existing :: [Only Int] of
               [] -> NoSuchPaste
               _ -> AlreadyTakenDown
+    , storeLatest = \now -> withConn $ \conn -> do
+        rows <-
+          query conn
+            "SELECT id FROM pastes\
+            \ WHERE taken_down_at IS NULL AND expires_at > ?\
+            \ ORDER BY created_at DESC, rowid DESC LIMIT 1"
+            (Only (Timestamp now))
+        pure $ case rows of
+          Only pid : _ -> parsePasteId pid
+          [] -> Nothing
     , storeInspect = \pid -> withConn $ \conn -> do
         rows <-
           query conn

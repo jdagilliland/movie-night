@@ -35,6 +35,16 @@ The server is configured with environment variables (see `docs/SPEC.md`
 §7.4). By default it stores data in `./data/pastes.db`, which is
 git-ignored.
 
+### The latest link
+
+`/latest` is a fixed, public link to the newest paste by anyone, so you
+can share one URL and keep pasting. It redirects (302, never cached) to the
+newest live paste; `/latest/raw` redirects to its raw text, so
+`curl -L <host>/latest/raw` works. A paste that is expired or taken down is
+skipped, and with no live paste at all `/latest` returns the usual 404.
+Every new paste is reachable this way as soon as it is created, so don't
+paste anything you aren't ready to show. See `docs/SPEC.md` §4.7.
+
 ### Tests
 
 ```

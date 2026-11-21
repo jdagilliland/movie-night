@@ -77,8 +77,14 @@ type API =
          :> Header "Origin" Text
          :> ReqBody '[FormUrlEncoded] PasteForm
          :> Verb 'POST 303 '[HTML] (Headers '[Header "Location" Text] NoContent)
+  :<|> "latest" :> Verb 'GET 302 '[HTML] Redirect
+  :<|> "latest" :> "raw" :> Verb 'GET 302 '[PlainText] Redirect
   :<|> Capture "pasteId" PasteId :> Get '[HTML] (Html ())
   :<|> Capture "pasteId" PasteId :> "raw" :> Get '[PlainText] Text
+
+-- | FR-27: a redirect that clients must not cache.
+type Redirect =
+  Headers '[Header "Location" Text, Header "Cache-Control" Text] NoContent
 
 data JavaScript
 
@@ -105,6 +111,8 @@ server env =
     :<|> pure pasteJs
     :<|> (\user -> pure (formPage (userName user) Nothing))
     :<|> createHandler
+    :<|> latest notFoundHtml ""
+    :<|> latest (plainError err404 "Paste not found\n") "/raw"
     :<|> viewPaste
     :<|> rawPaste
   where
@@ -149,6 +157,16 @@ server env =
         , errBody = renderBS (formPage (userName user) (Just message))
         , errHeaders = [htmlContentType]
         }
+
+    -- FR-29, FR-30: with no live paste, the same 404 as an unknown ID.
+    latest notFound suffix = do
+      now <- liftIO (envNow env)
+      found <- liftIO (storeLatest (envStore env) now)
+      case found of
+        Just pid ->
+          pure . addHeader ("/" <> pasteIdText pid <> suffix) $
+            addHeader "no-store" NoContent
+        Nothing -> throwError notFound
 
     viewPaste pid = pastePage (envBaseUrl env) <$> findPaste notFoundHtml pid
 

@@ -93,6 +93,9 @@ status = statusCode . simpleStatus
 contentType :: SResponse -> Maybe ByteString
 contentType = lookup hContentType . simpleHeaders
 
+cacheControl :: SResponse -> Maybe ByteString
+cacheControl = lookup "Cache-Control" . simpleHeaders
+
 body :: SResponse -> ByteString
 body = BL.toStrict . simpleBody
 
@@ -109,6 +112,20 @@ shouldContainBytes haystack needle =
 
 spec :: Spec
 spec = do
+  with (mkApp (addUTCTime (31 * nominalDay) t0) id) $
+    describe "FR-29, FR-30: GET /latest with no live paste" $ do
+      it "returns the not-found page" $ do
+        r <- get "/latest"
+        liftIO $ do
+          status r `shouldBe` 404
+          body r `shouldContainBytes` "Paste not found"
+
+      it "returns plain-text not found for /latest/raw" $ do
+        r <- get "/latest/raw"
+        liftIO $ do
+          status r `shouldBe` 404
+          contentType r `shouldBe` Just "text/plain;charset=utf-8"
+
   with (mkApp beforeExpiry id) $ do
     describe "FR-12, FR-13: GET /:id" $ do
       it "serves the paste as HTML without credentials" $ do
@@ -190,6 +207,24 @@ spec = do
         liftIO $ do
           body r `shouldContainBytes` "href=\"/abcdEFGH/raw\""
           body r `shouldContainBytes` "href=\"/\""
+
+    describe "FR-27 to FR-30: GET /latest" $ do
+      -- The fixtures share a creation time, so the last one inserted that
+      -- is still live wins; the taken-down one is skipped.
+      it "redirects to the newest live paste without credentials" $ do
+        r <- get "/latest"
+        liftIO $ do
+          status r `shouldBe` 302
+          location r `shouldBe` path title
+          cacheControl r `shouldBe` Just "no-store"
+          BL.length (simpleBody r) `shouldBe` 0
+
+      it "redirects /latest/raw to the raw view" $ do
+        r <- get "/latest/raw"
+        liftIO $ do
+          status r `shouldBe` 302
+          location r `shouldBe` path title <> "/raw"
+          cacheControl r `shouldBe` Just "no-store"
 
     describe "FR-14: GET /:id/raw" $ do
       it "returns the content exactly, as UTF-8 plain text" $ do

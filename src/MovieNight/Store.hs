@@ -58,6 +58,9 @@ data Store = Store
   , storeTakedown :: PasteId -> Text -> UTCTime -> IO TakedownResult
   -- ^ FR-24: erases content; arguments are the reason and the takedown time,
   -- which is stored truncated to whole seconds.
+  , storeLatest :: UTCTime -> IO (Maybe PasteId)
+  -- ^ FR-28: the newest live paste, by @createdAt@ with the later insert
+  -- winning a tie. Expired and taken-down pastes are skipped.
   , storeInspect :: PasteId -> IO (Maybe PasteInfo)
   -- ^ Metadata for any paste still in storage: live, taken down, or expired
   -- but not yet purged.
